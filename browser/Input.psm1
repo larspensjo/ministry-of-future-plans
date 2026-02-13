@@ -7,6 +7,7 @@ function ConvertFrom-KeyInfoToAction {
 
     switch ($KeyInfo.Key) {
         'Q' { return [pscustomobject]@{ Type = 'Quit' } }
+        'H' { return [pscustomobject]@{ Type = 'ToggleHideUnavailableTags' } }
         'Tab' { return [pscustomobject]@{ Type = 'SwitchPane' } }
         'UpArrow' { return [pscustomobject]@{ Type = 'MoveUp' } }
         'DownArrow' { return [pscustomobject]@{ Type = 'MoveDown' } }

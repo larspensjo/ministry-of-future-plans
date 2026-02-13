@@ -6,7 +6,7 @@ Describe 'Browser reducer' {
         $ideas = @(
             [pscustomobject]@{ Id = 'FI-1'; Title = 'One'; Tags = @('a'); Priority = 'P1'; Risk = 'M'; Captured = [datetime]'2026-02-10'; Summary='S1'; Rationale='R1'; Effort='M' },
             [pscustomobject]@{ Id = 'FI-2'; Title = 'Two'; Tags = @('a', 'b'); Priority = 'P2'; Risk = 'L'; Captured = [datetime]'2026-02-09'; Summary='S2'; Rationale='R2'; Effort='S' },
-            [pscustomobject]@{ Id = 'FI-3'; Title = 'Three'; Tags = @('b'); Priority = 'P3'; Risk = 'H'; Captured = [datetime]'2026-02-08'; Summary='S3'; Rationale='R3'; Effort='L' }
+            [pscustomobject]@{ Id = 'FI-3'; Title = 'Three'; Tags = @('b', 'c'); Priority = 'P3'; Risk = 'H'; Captured = [datetime]'2026-02-08'; Summary='S3'; Rationale='R3'; Effort='L' }
         )
         $state = New-BrowserState -Ideas $ideas -InitialWidth 120 -InitialHeight 40
     }
@@ -50,6 +50,45 @@ Describe 'Browser reducer' {
     It 'toggles current tag when action has no Tag property' {
         $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'ToggleTag' })
         $state.Query.SelectedTags.Contains('a') | Should -BeTrue
+    }
+
+    It 'derives unavailable tags from selected filters' {
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'ToggleTag'; Tag = 'a' })
+        $tagC = $state.Derived.VisibleTags | Where-Object Name -eq 'c' | Select-Object -First 1
+        $tagC.IsSelectable | Should -BeFalse
+        $tagC.MatchCount | Should -Be 0
+    }
+
+    It 'can hide unavailable tags with toggle action' {
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'ToggleTag'; Tag = 'a' })
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'ToggleHideUnavailableTags' })
+
+        $names = @($state.Derived.VisibleTags | ForEach-Object Name)
+        $names -contains 'c' | Should -BeFalse
+        $state.Ui.HideUnavailableTags | Should -BeTrue
+    }
+
+    It 'keeps cursor on same tag identity in hide mode when toggling twice' {
+        $ideas = @(
+            [pscustomobject]@{ Id = 'FI-1'; Title = 'One'; Tags = @('a', 'd'); Priority = 'P1'; Risk = 'M'; Captured = [datetime]'2026-02-10'; Summary='S1'; Rationale='R1'; Effort='M' },
+            [pscustomobject]@{ Id = 'FI-2'; Title = 'Two'; Tags = @('b', 'd'); Priority = 'P2'; Risk = 'L'; Captured = [datetime]'2026-02-09'; Summary='S2'; Rationale='R2'; Effort='S' },
+            [pscustomobject]@{ Id = 'FI-3'; Title = 'Three'; Tags = @('e', 'd'); Priority = 'P3'; Risk = 'H'; Captured = [datetime]'2026-02-08'; Summary='S3'; Rationale='R3'; Effort='L' },
+            [pscustomobject]@{ Id = 'FI-4'; Title = 'Four'; Tags = @('c'); Priority = 'P3'; Risk = 'H'; Captured = [datetime]'2026-02-07'; Summary='S4'; Rationale='R4'; Effort='L' }
+        )
+        $state = New-BrowserState -Ideas $ideas -InitialWidth 120 -InitialHeight 40
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'ToggleHideUnavailableTags' })
+
+        $indexOfD = -1
+        for ($i = 0; $i -lt $state.Derived.VisibleTags.Count; $i++) {
+            if ($state.Derived.VisibleTags[$i].Name -eq 'd') { $indexOfD = $i; break }
+        }
+        $state.Cursor.TagIndex = $indexOfD
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'ToggleTag' })
+        $state.Query.SelectedTags.Contains('d') | Should -BeTrue
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'ToggleTag' })
+        $state.Query.SelectedTags.Contains('d') | Should -BeFalse
     }
 
     It 'marks runtime as stopped on quit' {

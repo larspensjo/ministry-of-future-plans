@@ -20,6 +20,7 @@ function New-BrowserState {
         Ui = [pscustomobject]@{
             ActivePane = 'Tags'
             IsMaximized = $false
+            HideUnavailableTags = $false
             Layout = Get-BrowserLayout -Width $InitialWidth -Height $InitialHeight
         }
         Query = [pscustomobject]@{
@@ -30,6 +31,7 @@ function New-BrowserState {
         }
         Derived = [pscustomobject]@{
             VisibleIdeaIds = @()
+            VisibleTags = @()
         }
         Cursor = [pscustomobject]@{
             TagIndex = 0
@@ -57,6 +59,7 @@ function Copy-BrowserState {
         Ui = [pscustomobject]@{
             ActivePane = $State.Ui.ActivePane
             IsMaximized = $State.Ui.IsMaximized
+            HideUnavailableTags = $State.Ui.HideUnavailableTags
             Layout = $State.Ui.Layout
         }
         Query = [pscustomobject]@{
@@ -67,6 +70,7 @@ function Copy-BrowserState {
         }
         Derived = [pscustomobject]@{
             VisibleIdeaIds = @($State.Derived.VisibleIdeaIds)
+            VisibleTags = @($State.Derived.VisibleTags)
         }
         Cursor = [pscustomobject]@{
             TagIndex = $State.Cursor.TagIndex
@@ -93,58 +97,100 @@ function Update-BrowserDerivedState {
     $visibleIdeaIds = Get-VisibleIdeaIds -AllIdeas $State.Data.AllIdeas -SelectedTags $State.Query.SelectedTags -SearchText $State.Query.SearchText -SearchMode $State.Query.SearchMode -SortMode $State.Query.SortMode
     $State.Derived.VisibleIdeaIds = @($visibleIdeaIds)
 
+    $visibleIdeaIdSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($id in $State.Derived.VisibleIdeaIds) {
+        [void]$visibleIdeaIdSet.Add([string]$id)
+    }
+
+    $visibleIdeas = @($State.Data.AllIdeas | Where-Object { $visibleIdeaIdSet.Contains([string]$_.Id) })
+
+    $tagItems = New-Object System.Collections.Generic.List[object]
+    foreach ($tag in $State.Data.AllTags) {
+        $matchCount = 0
+        foreach ($idea in $visibleIdeas) {
+            if (@($idea.Tags) -contains $tag) {
+                $matchCount++
+            }
+        }
+
+        $isSelected = $State.Query.SelectedTags.Contains($tag)
+        $isSelectable = $isSelected -or ($matchCount -gt 0)
+
+        $tagItems.Add([pscustomobject]@{
+            Name = $tag
+            MatchCount = $matchCount
+            IsSelected = $isSelected
+            IsSelectable = $isSelectable
+        }) | Out-Null
+    }
+
+    $visibleTags = @($tagItems.ToArray())
+    if ($State.Ui.HideUnavailableTags) {
+        $visibleTags = @($visibleTags | Where-Object { $_.IsSelected -or $_.IsSelectable })
+    }
+    $State.Derived.VisibleTags = @($visibleTags)
+
     $visibleCount = $State.Derived.VisibleIdeaIds.Count
     if ($visibleCount -eq 0) {
         $State.Cursor.IdeaIndex = 0
         $State.Cursor.IdeaScrollTop = 0
-        return $State
-    }
+    } else {
+        if ($State.Cursor.IdeaIndex -ge $visibleCount) {
+            $State.Cursor.IdeaIndex = $visibleCount - 1
+        }
+        if ($State.Cursor.IdeaIndex -lt 0) {
+            $State.Cursor.IdeaIndex = 0
+        }
+        if ($State.Cursor.IdeaScrollTop -lt 0) {
+            $State.Cursor.IdeaScrollTop = 0
+        }
 
-    if ($State.Cursor.IdeaIndex -ge $visibleCount) {
-        $State.Cursor.IdeaIndex = $visibleCount - 1
-    }
-    if ($State.Cursor.IdeaIndex -lt 0) {
-        $State.Cursor.IdeaIndex = 0
-    }
-    if ($State.Cursor.IdeaScrollTop -lt 0) {
-        $State.Cursor.IdeaScrollTop = 0
-    }
-
-    $ideaViewport = 1
-    if ($State.Ui.Layout -and $State.Ui.Layout.Mode -eq 'Normal') {
-        $ideaViewport = [Math]::Max(1, $State.Ui.Layout.ListPane.H - 1)
-    }
-    $maxIdeaScroll = [Math]::Max(0, $visibleCount - $ideaViewport)
-    if ($State.Cursor.IdeaScrollTop -gt $maxIdeaScroll) {
-        $State.Cursor.IdeaScrollTop = $maxIdeaScroll
-    }
-    if ($State.Cursor.IdeaIndex -lt $State.Cursor.IdeaScrollTop) {
-        $State.Cursor.IdeaScrollTop = $State.Cursor.IdeaIndex
-    }
-    if ($State.Cursor.IdeaIndex -ge ($State.Cursor.IdeaScrollTop + $ideaViewport)) {
-        $State.Cursor.IdeaScrollTop = [Math]::Max(0, $State.Cursor.IdeaIndex - $ideaViewport + 1)
+        $ideaViewport = 1
+        if ($State.Ui.Layout -and $State.Ui.Layout.Mode -eq 'Normal') {
+            $ideaViewport = [Math]::Max(1, $State.Ui.Layout.ListPane.H - 1)
+        }
+        $maxIdeaScroll = [Math]::Max(0, $visibleCount - $ideaViewport)
+        if ($State.Cursor.IdeaScrollTop -gt $maxIdeaScroll) {
+            $State.Cursor.IdeaScrollTop = $maxIdeaScroll
+        }
+        if ($State.Cursor.IdeaIndex -lt $State.Cursor.IdeaScrollTop) {
+            $State.Cursor.IdeaScrollTop = $State.Cursor.IdeaIndex
+        }
+        if ($State.Cursor.IdeaIndex -ge ($State.Cursor.IdeaScrollTop + $ideaViewport)) {
+            $State.Cursor.IdeaScrollTop = [Math]::Max(0, $State.Cursor.IdeaIndex - $ideaViewport + 1)
+        }
     }
 
     $tagViewport = 1
     if ($State.Ui.Layout -and $State.Ui.Layout.Mode -eq 'Normal') {
         $tagViewport = [Math]::Max(1, $State.Ui.Layout.TagPane.H - 1)
     }
-    $tagCount = $State.Data.AllTags.Count
-    if ($State.Cursor.TagIndex -lt 0) {
+
+    $tagCount = $State.Derived.VisibleTags.Count
+    if ($tagCount -eq 0) {
         $State.Cursor.TagIndex = 0
-    }
-    if ($State.Cursor.TagIndex -ge $tagCount -and $tagCount -gt 0) {
-        $State.Cursor.TagIndex = $tagCount - 1
-    }
-    $maxTagScroll = [Math]::Max(0, $tagCount - $tagViewport)
-    if ($State.Cursor.TagScrollTop -gt $maxTagScroll) {
-        $State.Cursor.TagScrollTop = $maxTagScroll
-    }
-    if ($State.Cursor.TagIndex -lt $State.Cursor.TagScrollTop) {
-        $State.Cursor.TagScrollTop = $State.Cursor.TagIndex
-    }
-    if ($State.Cursor.TagIndex -ge ($State.Cursor.TagScrollTop + $tagViewport)) {
-        $State.Cursor.TagScrollTop = [Math]::Max(0, $State.Cursor.TagIndex - $tagViewport + 1)
+        $State.Cursor.TagScrollTop = 0
+    } else {
+        if ($State.Cursor.TagIndex -lt 0) {
+            $State.Cursor.TagIndex = 0
+        }
+        if ($State.Cursor.TagIndex -ge $tagCount) {
+            $State.Cursor.TagIndex = $tagCount - 1
+        }
+
+        $maxTagScroll = [Math]::Max(0, $tagCount - $tagViewport)
+        if ($State.Cursor.TagScrollTop -gt $maxTagScroll) {
+            $State.Cursor.TagScrollTop = $maxTagScroll
+        }
+        if ($State.Cursor.TagScrollTop -lt 0) {
+            $State.Cursor.TagScrollTop = 0
+        }
+        if ($State.Cursor.TagIndex -lt $State.Cursor.TagScrollTop) {
+            $State.Cursor.TagScrollTop = $State.Cursor.TagIndex
+        }
+        if ($State.Cursor.TagIndex -ge ($State.Cursor.TagScrollTop + $tagViewport)) {
+            $State.Cursor.TagScrollTop = [Math]::Max(0, $State.Cursor.TagIndex - $tagViewport + 1)
+        }
     }
 
     return $State
@@ -181,7 +227,7 @@ function Invoke-BrowserReducer {
         }
         'MoveDown' {
             if ($next.Ui.ActivePane -eq 'Tags') {
-                $maxTagIndex = [Math]::Max(0, $next.Data.AllTags.Count - 1)
+                $maxTagIndex = [Math]::Max(0, $next.Derived.VisibleTags.Count - 1)
                 if ($next.Cursor.TagIndex -lt $maxTagIndex) { $next.Cursor.TagIndex++ }
             } else {
                 $maxIdeaIndex = [Math]::Max(0, $next.Derived.VisibleIdeaIds.Count - 1)
@@ -196,10 +242,10 @@ function Invoke-BrowserReducer {
                 $tag = [string]$tagProp.Value
             }
             if ([string]::IsNullOrWhiteSpace($tag)) {
-                if ($next.Data.AllTags.Count -eq 0) {
+                if ($next.Derived.VisibleTags.Count -eq 0) {
                     return $next
                 }
-                $tag = $next.Data.AllTags[$next.Cursor.TagIndex]
+                $tag = [string]$next.Derived.VisibleTags[$next.Cursor.TagIndex].Name
             }
 
             if ($next.Query.SelectedTags.Contains($tag)) {
@@ -210,6 +256,41 @@ function Invoke-BrowserReducer {
 
             $next.Cursor.IdeaIndex = 0
             $next.Cursor.IdeaScrollTop = 0
+            $next = Update-BrowserDerivedState -State $next
+
+            $targetTagIndex = -1
+            for ($i = 0; $i -lt $next.Derived.VisibleTags.Count; $i++) {
+                if ($next.Derived.VisibleTags[$i].Name -eq $tag) {
+                    $targetTagIndex = $i
+                    break
+                }
+            }
+            if ($targetTagIndex -ge 0) {
+                $next.Cursor.TagIndex = $targetTagIndex
+            }
+
+            return Update-BrowserDerivedState -State $next
+        }
+        'ToggleHideUnavailableTags' {
+            $currentTagName = $null
+            if ($next.Cursor.TagIndex -ge 0 -and $next.Cursor.TagIndex -lt $next.Derived.VisibleTags.Count) {
+                $currentTagName = [string]$next.Derived.VisibleTags[$next.Cursor.TagIndex].Name
+            }
+
+            $next.Ui.HideUnavailableTags = -not $next.Ui.HideUnavailableTags
+            $next.Cursor.TagIndex = 0
+            $next.Cursor.TagScrollTop = 0
+            $next = Update-BrowserDerivedState -State $next
+
+            if (-not [string]::IsNullOrWhiteSpace($currentTagName)) {
+                for ($i = 0; $i -lt $next.Derived.VisibleTags.Count; $i++) {
+                    if ($next.Derived.VisibleTags[$i].Name -eq $currentTagName) {
+                        $next.Cursor.TagIndex = $i
+                        break
+                    }
+                }
+            }
+
             return Update-BrowserDerivedState -State $next
         }
         'Resize' {

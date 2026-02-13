@@ -9,6 +9,19 @@ function Get-IdeaById {
     return $Ideas | Where-Object { $_.Id -eq $Id } | Select-Object -First 1
 }
 
+function Get-VisibleTagByIndex {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][int]$TagIndex
+    )
+
+    if ($TagIndex -lt 0 -or $TagIndex -ge $State.Derived.VisibleTags.Count) {
+        return $null
+    }
+
+    return $State.Derived.VisibleTags[$TagIndex]
+}
+
 function Write-TruncatedLine {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
@@ -75,13 +88,18 @@ function Render-BrowserState {
 
     for ($row = 0; $row -lt $topRows; $row++) {
         $tagText = ''
+        $tagColor = 'Gray'
         $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-        if ($tagIndex -lt $State.Data.AllTags.Count) {
-            $tag = $State.Data.AllTags[$tagIndex]
-            $selected = $State.Query.SelectedTags.Contains($tag)
+        $tagItem = Get-VisibleTagByIndex -State $State -TagIndex $tagIndex
+        if ($null -ne $tagItem) {
             $cursor = if ($State.Cursor.TagIndex -eq $tagIndex) { '>' } else { ' ' }
-            $mark = if ($selected) { '[x]' } else { '[ ]' }
-            $tagText = "$cursor $mark $tag"
+            $mark = if ($tagItem.IsSelected) { '[x]' } else { '[ ]' }
+            $tagText = "$cursor $mark $($tagItem.Name) ($($tagItem.MatchCount))"
+            if (-not $tagItem.IsSelectable -and -not $tagItem.IsSelected) {
+                $tagColor = 'DarkGray'
+            } elseif ($tagItem.IsSelected) {
+                $tagColor = 'Green'
+            }
         }
 
         $ideaText = ''
@@ -95,35 +113,45 @@ function Render-BrowserState {
             }
         }
 
-        Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -NoNewline
+        Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -ForegroundColor $tagColor -NoNewline
         Write-Host ' ' -NoNewline
         Write-Host (Write-TruncatedLine -Text $ideaText -Width $layout.ListPane.W)
         $tagRowOffset++
     }
 
     $tagText = ''
+    $tagColor = 'Gray'
     $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-    if ($tagIndex -lt $State.Data.AllTags.Count) {
-        $tag = $State.Data.AllTags[$tagIndex]
-        $selected = $State.Query.SelectedTags.Contains($tag)
+    $tagItem = Get-VisibleTagByIndex -State $State -TagIndex $tagIndex
+    if ($null -ne $tagItem) {
         $cursor = if ($State.Cursor.TagIndex -eq $tagIndex) { '>' } else { ' ' }
-        $mark = if ($selected) { '[x]' } else { '[ ]' }
-        $tagText = "$cursor $mark $tag"
+        $mark = if ($tagItem.IsSelected) { '[x]' } else { '[ ]' }
+        $tagText = "$cursor $mark $($tagItem.Name) ($($tagItem.MatchCount))"
+        if (-not $tagItem.IsSelectable -and -not $tagItem.IsSelected) {
+            $tagColor = 'DarkGray'
+        } elseif ($tagItem.IsSelected) {
+            $tagColor = 'Green'
+        }
     }
-    Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -NoNewline
+    Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -ForegroundColor $tagColor -NoNewline
     Write-Host ' ' -NoNewline
     Write-Host (Write-TruncatedLine -Text '[Details]' -Width $layout.DetailPane.W) -ForegroundColor Cyan
     $tagRowOffset++
 
     for ($row = 0; $row -lt $detailRows; $row++) {
         $tagText = ''
+        $tagColor = 'Gray'
         $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-        if ($tagIndex -lt $State.Data.AllTags.Count) {
-            $tag = $State.Data.AllTags[$tagIndex]
-            $selected = $State.Query.SelectedTags.Contains($tag)
+        $tagItem = Get-VisibleTagByIndex -State $State -TagIndex $tagIndex
+        if ($null -ne $tagItem) {
             $cursor = if ($State.Cursor.TagIndex -eq $tagIndex) { '>' } else { ' ' }
-            $mark = if ($selected) { '[x]' } else { '[ ]' }
-            $tagText = "$cursor $mark $tag"
+            $mark = if ($tagItem.IsSelected) { '[x]' } else { '[ ]' }
+            $tagText = "$cursor $mark $($tagItem.Name) ($($tagItem.MatchCount))"
+            if (-not $tagItem.IsSelectable -and -not $tagItem.IsSelected) {
+                $tagColor = 'DarkGray'
+            } elseif ($tagItem.IsSelected) {
+                $tagColor = 'Green'
+            }
         }
 
         $detailText = ''
@@ -131,13 +159,14 @@ function Render-BrowserState {
             $detailText = [string]$detailLines[$row]
         }
 
-        Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -NoNewline
+        Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -ForegroundColor $tagColor -NoNewline
         Write-Host ' ' -NoNewline
         Write-Host (Write-TruncatedLine -Text $detailText -Width $layout.DetailPane.W)
         $tagRowOffset++
     }
 
-    $status = "Total: $($State.Data.AllIdeas.Count) | Filtered: $($State.Derived.VisibleIdeaIds.Count) | Selected Tags: $($State.Query.SelectedTags.Count) | [Tab] Switch [Space] Toggle [Q] Quit"
+    $hideMode = if ($State.Ui.HideUnavailableTags) { 'On' } else { 'Off' }
+    $status = "Total: $($State.Data.AllIdeas.Count) | Filtered: $($State.Derived.VisibleIdeaIds.Count) | Selected Tags: $($State.Query.SelectedTags.Count) | HideUnavailable: $hideMode | [Tab] Switch [Space] Toggle [H] Hide [Q] Quit"
     Write-Host (Write-TruncatedLine -Text $status -Width $layout.StatusPane.W) -ForegroundColor DarkGray
 
     try { [Console]::CursorVisible = $false } catch {}
