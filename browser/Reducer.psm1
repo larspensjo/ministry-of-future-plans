@@ -163,7 +163,7 @@ function Update-BrowserDerivedState {
 
     $tagViewport = 1
     if ($State.Ui.Layout -and $State.Ui.Layout.Mode -eq 'Normal') {
-        $tagViewport = [Math]::Max(1, $State.Ui.Layout.TagPane.H - 1)
+        $tagViewport = [Math]::Max(1, $State.Ui.Layout.TagPane.H - 2)
     }
 
     $tagCount = $State.Derived.VisibleTags.Count
@@ -204,6 +204,22 @@ function Invoke-BrowserReducer {
 
     $next = Copy-BrowserState -State $State
 
+    function Get-TagViewportSize {
+        param($CurrentState)
+        if ($CurrentState.Ui.Layout -and $CurrentState.Ui.Layout.Mode -eq 'Normal') {
+            return [Math]::Max(1, $CurrentState.Ui.Layout.TagPane.H - 2)
+        }
+        return 1
+    }
+
+    function Get-IdeaViewportSize {
+        param($CurrentState)
+        if ($CurrentState.Ui.Layout -and $CurrentState.Ui.Layout.Mode -eq 'Normal') {
+            return [Math]::Max(1, $CurrentState.Ui.Layout.ListPane.H - 1)
+        }
+        return 1
+    }
+
     switch ($Action.Type) {
         'Quit' {
             $next.Runtime.IsRunning = $false
@@ -232,6 +248,46 @@ function Invoke-BrowserReducer {
             } else {
                 $maxIdeaIndex = [Math]::Max(0, $next.Derived.VisibleIdeaIds.Count - 1)
                 if ($next.Cursor.IdeaIndex -lt $maxIdeaIndex) { $next.Cursor.IdeaIndex++ }
+            }
+            return Update-BrowserDerivedState -State $next
+        }
+        'PageUp' {
+            if ($next.Ui.ActivePane -eq 'Tags') {
+                $step = Get-TagViewportSize -CurrentState $next
+                $next.Cursor.TagIndex = [Math]::Max(0, $next.Cursor.TagIndex - $step)
+            } else {
+                $step = Get-IdeaViewportSize -CurrentState $next
+                $next.Cursor.IdeaIndex = [Math]::Max(0, $next.Cursor.IdeaIndex - $step)
+            }
+            return Update-BrowserDerivedState -State $next
+        }
+        'PageDown' {
+            if ($next.Ui.ActivePane -eq 'Tags') {
+                $step = Get-TagViewportSize -CurrentState $next
+                $maxTagIndex = [Math]::Max(0, $next.Derived.VisibleTags.Count - 1)
+                $next.Cursor.TagIndex = [Math]::Min($maxTagIndex, $next.Cursor.TagIndex + $step)
+            } else {
+                $step = Get-IdeaViewportSize -CurrentState $next
+                $maxIdeaIndex = [Math]::Max(0, $next.Derived.VisibleIdeaIds.Count - 1)
+                $next.Cursor.IdeaIndex = [Math]::Min($maxIdeaIndex, $next.Cursor.IdeaIndex + $step)
+            }
+            return Update-BrowserDerivedState -State $next
+        }
+        'MoveHome' {
+            if ($next.Ui.ActivePane -eq 'Tags') {
+                $next.Cursor.TagIndex = 0
+                $next.Cursor.TagScrollTop = 0
+            } else {
+                $next.Cursor.IdeaIndex = 0
+                $next.Cursor.IdeaScrollTop = 0
+            }
+            return Update-BrowserDerivedState -State $next
+        }
+        'MoveEnd' {
+            if ($next.Ui.ActivePane -eq 'Tags') {
+                $next.Cursor.TagIndex = [Math]::Max(0, $next.Derived.VisibleTags.Count - 1)
+            } else {
+                $next.Cursor.IdeaIndex = [Math]::Max(0, $next.Derived.VisibleIdeaIds.Count - 1)
             }
             return Update-BrowserDerivedState -State $next
         }

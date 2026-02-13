@@ -25,6 +25,58 @@ Describe 'Browser reducer' {
         $state.Cursor.IdeaIndex | Should -Be 2
     }
 
+    It 'supports PageDown/PageUp in ideas pane' {
+        $state = New-BrowserState -Ideas $ideas -InitialWidth 120 -InitialHeight 16
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'SwitchPane' })
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'PageDown' })
+        $state.Cursor.IdeaIndex | Should -BeGreaterThan 0
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'PageUp' })
+        $state.Cursor.IdeaIndex | Should -Be 0
+    }
+
+    It 'supports Home/End in ideas pane' {
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'SwitchPane' })
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveEnd' })
+        $state.Cursor.IdeaIndex | Should -Be 2
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveHome' })
+        $state.Cursor.IdeaIndex | Should -Be 0
+    }
+
+    It 'supports Home/End in tags pane' {
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveEnd' })
+        $state.Cursor.TagIndex | Should -Be 2
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveHome' })
+        $state.Cursor.TagIndex | Should -Be 0
+    }
+
+    It 'scrolls tags as soon as cursor moves past last visible tag row' {
+        $manyIdeas = @()
+        for ($i = 0; $i -lt 20; $i++) {
+            $manyIdeas += [pscustomobject]@{
+                Id = "FI-T-$i"
+                Title = "Tag $i"
+                Tags = @("t$i")
+                Priority = 'P2'
+                Risk = 'M'
+                Captured = [datetime]'2026-02-10'
+                Summary = 'S'
+                Rationale = 'R'
+                Effort = 'M'
+            }
+        }
+
+        $state = New-BrowserState -Ideas $manyIdeas -InitialWidth 120 -InitialHeight 16
+        for ($n = 0; $n -lt 13; $n++) {
+            $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveDown' })
+        }
+
+        $state.Cursor.TagIndex | Should -Be 13
+        $state.Cursor.TagScrollTop | Should -Be 1
+    }
+
     It 'resets idea index after filter change' {
         $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'SwitchPane' })
         $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveDown' })

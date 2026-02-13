@@ -11,6 +11,10 @@ function ConvertFrom-KeyInfoToAction {
         'Tab' { return [pscustomobject]@{ Type = 'SwitchPane' } }
         'UpArrow' { return [pscustomobject]@{ Type = 'MoveUp' } }
         'DownArrow' { return [pscustomobject]@{ Type = 'MoveDown' } }
+        'PageUp' { return [pscustomobject]@{ Type = 'PageUp' } }
+        'PageDown' { return [pscustomobject]@{ Type = 'PageDown' } }
+        'Home' { return [pscustomobject]@{ Type = 'MoveHome' } }
+        'End' { return [pscustomobject]@{ Type = 'MoveEnd' } }
         'Spacebar' { return [pscustomobject]@{ Type = 'ToggleTag' } }
         default { return $null }
     }
