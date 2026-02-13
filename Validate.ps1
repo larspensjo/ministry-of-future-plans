@@ -27,7 +27,6 @@ function Add-Violation {
     $violations.Add((New-Violation -Code $Code -Message $Message -Line $Line)) | Out-Null
 }
 
-# Taxonomy at top
 if (-not $doc.TaxonomyLine) {
     Add-Violation -Code 'taxonomy.missing' -Message 'Missing "## Taxonomy" section.' -Line 1
 }
@@ -37,17 +36,14 @@ if ($doc.TaxonomyLine -and $firstTopLevel -and $doc.TaxonomyLine -gt $firstTopLe
     Add-Violation -Code 'taxonomy.order' -Message '"## Taxonomy" must appear before idea groups.' -Line $doc.TaxonomyLine
 }
 
-# Header hierarchy
 foreach ($group in $doc.Groups) {
     if ($group.SubLevel -and -not $group.TopLevel) {
         Add-Violation -Code 'header.missingTop' -Message "SubLevel header without a TopLevel: $($group.SubLevel)" -Line $group.Line
     }
 }
 
-# Sorting by TopLevel then SubLevel
 $sortedGroups = $doc.Groups | Where-Object { $_.TopLevel -and $_.SubLevel } | ForEach-Object {
     [pscustomobject]@{
-        Key = "$($_.TopLevel)|$($_.SubLevel)"
         TopLevel = $_.TopLevel
         SubLevel = $_.SubLevel
         Line = $_.Line
@@ -62,49 +58,49 @@ for ($i = 0; $i -lt $sortedGroups.Count; $i++) {
     }
 }
 
-# Entry checks
-$requiredFields = @('Status','TopLevel','SubLevel','Priority','Effort','Risk','Origin','Tags','Summary','Rationale')
 foreach ($entry in $doc.Entries) {
     if (-not $entry.TopLevel -or -not $entry.SubLevel) {
         Add-Violation -Code 'entry.headerContext' -Message "Entry $($entry.Id) must be under TopLevel/SubLevel headers." -Line $entry.StartLine
         continue
     }
 
-    $fieldMap = Get-FieldMap -EntryLines $entry.Lines
-    foreach ($field in $requiredFields) {
-        if (-not $fieldMap.ContainsKey($field)) {
-            Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: $field" -Line $entry.StartLine
-        }
+    if ([string]::IsNullOrWhiteSpace($entry.Status)) {
+        Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: Status" -Line $entry.StartLine
+    }
+    if ([string]::IsNullOrWhiteSpace($entry.Priority)) {
+        Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: Priority" -Line $entry.StartLine
+    }
+    if ([string]::IsNullOrWhiteSpace($entry.Effort)) {
+        Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: Effort" -Line $entry.StartLine
+    }
+    if ([string]::IsNullOrWhiteSpace($entry.Risk)) {
+        Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: Risk" -Line $entry.StartLine
+    }
+    if (@($entry.Tags).Count -eq 0) {
+        Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: Tags" -Line $entry.StartLine
+    }
+    if ([string]::IsNullOrWhiteSpace($entry.Summary)) {
+        Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: Summary" -Line $entry.StartLine
+    }
+    if ([string]::IsNullOrWhiteSpace($entry.Rationale)) {
+        Add-Violation -Code 'entry.missingField' -Message "Entry $($entry.Id) missing field: Rationale" -Line $entry.StartLine
     }
 
-    if ($fieldMap.ContainsKey('TopLevel') -and $fieldMap['TopLevel'] -ne $entry.TopLevel) {
-        Add-Violation -Code 'entry.topMismatch' -Message "Entry $($entry.Id) TopLevel field does not match header ($($entry.TopLevel))." -Line $entry.StartLine
+    if (-not $entry.OriginSourceDoc) {
+        Add-Violation -Code 'origin.sourceDoc' -Message "Entry $($entry.Id) Origin must include SourceDoc." -Line $entry.StartLine
+    }
+    if (-not $entry.OriginSection) {
+        Add-Violation -Code 'origin.sourceSection' -Message "Entry $($entry.Id) Origin must include SourceSection." -Line $entry.StartLine
+    }
+    if (-not $entry.CapturedRaw) {
+        Add-Violation -Code 'origin.captured' -Message "Entry $($entry.Id) Origin must include Captured date." -Line $entry.StartLine
     }
 
-    if ($fieldMap.ContainsKey('SubLevel') -and $fieldMap['SubLevel'] -ne $entry.SubLevel) {
-        Add-Violation -Code 'entry.subMismatch' -Message "Entry $($entry.Id) SubLevel field does not match header ($($entry.SubLevel))." -Line $entry.StartLine
-    }
-
-    $origin = Get-SectionPresence -EntryLines $entry.Lines -Header 'Origin'
-    if ($origin.Found) {
-        if (-not ($origin.Items | Where-Object { $_ -match '^-\s+SourceDoc:' })) {
-            Add-Violation -Code 'origin.sourceDoc' -Message "Entry $($entry.Id) Origin must include SourceDoc." -Line $entry.StartLine
-        }
-        if (-not ($origin.Items | Where-Object { $_ -match '^-\s+SourceSection:' })) {
-            Add-Violation -Code 'origin.sourceSection' -Message "Entry $($entry.Id) Origin must include SourceSection." -Line $entry.StartLine
-        }
-        if (-not ($origin.Items | Where-Object { $_ -match '^-\s+Captured:' })) {
-            Add-Violation -Code 'origin.captured' -Message "Entry $($entry.Id) Origin must include Captured date." -Line $entry.StartLine
-        }
-    }
-
-    $criteria = Get-SectionPresence -EntryLines $entry.Lines -Header 'SuccessCriteria'
-    if ($criteria.Found -and $criteria.Items.Count -eq 0) {
+    if (@($entry.SuccessCriteria).Count -eq 0) {
         Add-Violation -Code 'successCriteria.empty' -Message "Entry $($entry.Id) SuccessCriteria must include at least one bullet." -Line $entry.StartLine
     }
 }
 
-# Output
 if ($OutputFormat -eq 'Json') {
     $violations | ConvertTo-Json -Depth 5
 } else {
