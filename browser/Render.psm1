@@ -2,6 +2,12 @@ Set-StrictMode -Version Latest
 
 $SCROLLBAR_THUMB_GLYPH = '░'
 $SCROLLBAR_TRACK_GLYPH = '│'
+$BOX_TOP_LEFT = '╭'
+$BOX_TOP_RIGHT = '╮'
+$BOX_BOTTOM_LEFT = '╰'
+$BOX_BOTTOM_RIGHT = '╯'
+$BOX_HORIZONTAL = '─'
+$BOX_VERTICAL = '│'
 
 function Get-PropertyValueOrDefault {
     param(
@@ -124,7 +130,21 @@ function Write-ColorSegments {
 
     $normalizedSegments = @()
     $remaining = $Width
-    $segmentItems = @($Segments)
+    $segmentItems = @()
+    foreach ($item in @($Segments)) {
+        if ($null -eq $item) {
+            continue
+        }
+
+        if (($item -is [System.Array]) -and -not ($item -is [string])) {
+            foreach ($child in @($item)) {
+                $segmentItems += $child
+            }
+            continue
+        }
+
+        $segmentItems += $item
+    }
 
     foreach ($segment in $segmentItems) {
         if ($remaining -le 0) {
@@ -388,6 +408,140 @@ function Build-DetailSegments {
     )
 }
 
+function Get-PaneBorderColor {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$PaneName,
+        [Parameter(Mandatory = $true)]$State
+    )
+
+    if ($PaneName -eq $State.Ui.ActivePane) {
+        return 'Cyan'
+    }
+
+    return 'DarkGray'
+}
+
+function Build-BoxTopSegments {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Title,
+        [Parameter(Mandatory = $true)][int]$Width,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$BorderColor,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$TitleColor
+    )
+
+    if ($Width -le 0) {
+        Write-Output -NoEnumerate @()
+        return
+    }
+
+    if ($Width -eq 1) {
+        Write-Output -NoEnumerate @(
+            @{ Text = $BOX_TOP_LEFT; Color = $BorderColor }
+        )
+        return
+    }
+
+    $innerWidth = $Width - 2
+    $titleText = if ([string]::IsNullOrWhiteSpace($Title)) { '' } else { " $Title " }
+    if ($titleText.Length -gt $innerWidth) {
+        $titleText = $titleText.Substring(0, $innerWidth)
+    }
+    $leftFill = [Math]::Floor(($innerWidth - $titleText.Length) / 2)
+    $rightFill = $innerWidth - $titleText.Length - $leftFill
+
+    $segments = @(
+        @{ Text = $BOX_TOP_LEFT; Color = $BorderColor }
+    )
+    if ($leftFill -gt 0) {
+        $segments += @{ Text = ($BOX_HORIZONTAL * $leftFill); Color = $BorderColor }
+    }
+    if ($titleText.Length -gt 0) {
+        $segments += @{ Text = $titleText; Color = $TitleColor }
+    }
+    if ($rightFill -gt 0) {
+        $segments += @{ Text = ($BOX_HORIZONTAL * $rightFill); Color = $BorderColor }
+    }
+    $segments += @{ Text = $BOX_TOP_RIGHT; Color = $BorderColor }
+
+    Write-Output -NoEnumerate $segments
+}
+
+function Build-BoxBottomSegments {
+    param(
+        [Parameter(Mandatory = $true)][int]$Width,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$BorderColor
+    )
+
+    if ($Width -le 0) {
+        Write-Output -NoEnumerate @()
+        return
+    }
+
+    if ($Width -eq 1) {
+        Write-Output -NoEnumerate @(
+            @{ Text = $BOX_BOTTOM_LEFT; Color = $BorderColor }
+        )
+        return
+    }
+
+    $innerWidth = [Math]::Max(0, $Width - 2)
+    $segments = @(
+        @{ Text = $BOX_BOTTOM_LEFT; Color = $BorderColor }
+    )
+    if ($innerWidth -gt 0) {
+        $segments += @{ Text = ($BOX_HORIZONTAL * $innerWidth); Color = $BorderColor }
+    }
+    $segments += @{ Text = $BOX_BOTTOM_RIGHT; Color = $BorderColor }
+
+    Write-Output -NoEnumerate $segments
+}
+
+function Build-BorderedRowSegments {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$InnerSegments,
+        [Parameter(Mandatory = $true)][int]$Width,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$BorderColor
+    )
+
+    if ($Width -le 0) {
+        Write-Output -NoEnumerate @()
+        return
+    }
+
+    if ($Width -eq 1) {
+        Write-Output -NoEnumerate @(
+            @{ Text = $BOX_VERTICAL; Color = $BorderColor }
+        )
+        return
+    }
+
+    $innerWidth = $Width - 2
+    $flatInnerSegments = @()
+    foreach ($item in @($InnerSegments)) {
+        if ($null -eq $item) {
+            continue
+        }
+        if (($item -is [System.Array]) -and -not ($item -is [string])) {
+            foreach ($child in @($item)) {
+                $flatInnerSegments += $child
+            }
+            continue
+        }
+        $flatInnerSegments += $item
+    }
+
+    $normalizedInnerSegments = @(Write-ColorSegments -Segments $flatInnerSegments -Width $innerWidth -NoEmit)
+    $segments = @(
+        @{ Text = $BOX_VERTICAL; Color = $BorderColor }
+    )
+    if ($normalizedInnerSegments.Count -gt 0) {
+        $segments += $normalizedInnerSegments
+    }
+    $segments += @{ Text = $BOX_VERTICAL; Color = $BorderColor }
+
+    Write-Output -NoEnumerate $segments
+}
+
 function Render-BrowserState {
     param(
         [Parameter(Mandatory = $true)]$State
@@ -405,11 +559,17 @@ function Render-BrowserState {
         return
     }
 
-    $topRows = [Math]::Max(0, $layout.ListPane.H - 1)
-    $detailRows = [Math]::Max(0, $layout.DetailPane.H - 1)
-    $tagRowOffset = 0
+    $tagBorderColor = Get-PaneBorderColor -PaneName 'Tags' -State $State
+    $ideaBorderColor = Get-PaneBorderColor -PaneName 'Ideas' -State $State
+    $detailBorderColor = 'DarkGray'
+
+    $tagTitleColor = $tagBorderColor
+    $ideaTitleColor = $ideaBorderColor
+    $detailTitleColor = 'DarkGray'
+
     $tagViewRows = [Math]::Max(1, $layout.TagPane.H - 2)
-    $ideaViewRows = [Math]::Max(1, $layout.ListPane.H - 1)
+    $ideaViewRows = [Math]::Max(1, $layout.ListPane.H - 2)
+    $detailRows = [Math]::Max(0, $layout.DetailPane.H - 2)
     $tagThumb = Get-ScrollThumb -TotalItems $State.Derived.VisibleTags.Count -ViewRows $tagViewRows -ScrollTop $State.Cursor.TagScrollTop
     $ideaThumb = Get-ScrollThumb -TotalItems $State.Derived.VisibleIdeaIds.Count -ViewRows $ideaViewRows -ScrollTop $State.Cursor.IdeaScrollTop
 
@@ -422,79 +582,93 @@ function Render-BrowserState {
         $detailSegments = Build-DetailSegments -Idea $selectedIdea
     }
 
-    $tagHeaderColor = if ($State.Ui.ActivePane -eq 'Tags') { 'Cyan' } else { 'DarkGray' }
-    $ideaHeaderColor = if ($State.Ui.ActivePane -eq 'Ideas') { 'Cyan' } else { 'DarkGray' }
-    Write-Host (Write-TruncatedLine -Text '[Tags]' -Width $layout.TagPane.W) -ForegroundColor $tagHeaderColor -NoNewline
-    Write-Host ' ' -NoNewline
-    Write-Host (Write-TruncatedLine -Text '[Ideas]' -Width $layout.ListPane.W) -ForegroundColor $ideaHeaderColor
+    for ($globalRow = 0; $globalRow -lt $layout.TagPane.H; $globalRow++) {
+        $leftSegments = @()
+        if ($globalRow -eq 0) {
+            $leftSegments = Build-BoxTopSegments -Title '[Tags]' -Width $layout.TagPane.W -BorderColor $tagBorderColor -TitleColor $tagTitleColor
+        } elseif ($globalRow -eq ($layout.TagPane.H - 1)) {
+            $leftSegments = Build-BoxBottomSegments -Width $layout.TagPane.W -BorderColor $tagBorderColor
+        } else {
+            $tagInnerRow = $globalRow - 1
+            $tagIndex = $State.Cursor.TagScrollTop + $tagInnerRow
+            $tagRow = Get-TagRowModel -State $State -TagIndex $tagIndex -TagRowOffset $tagInnerRow -TagThumb $tagThumb
+            $tagInnerSegments = Build-TagSegments -TagText $tagRow.Text -TagMarker $tagRow.Marker -TagColor $tagRow.Color
+            $leftSegments = Build-BorderedRowSegments -InnerSegments $tagInnerSegments -Width $layout.TagPane.W -BorderColor $tagBorderColor
+        }
 
-    for ($row = 0; $row -lt $topRows; $row++) {
-        $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-        $tagRow = Get-TagRowModel -State $State -TagIndex $tagIndex -TagRowOffset $tagRowOffset -TagThumb $tagThumb
-        $tagSegments = Build-TagSegments -TagText $tagRow.Text -TagMarker $tagRow.Marker -TagColor $tagRow.Color
+        $rightSegments = @()
+        $rightBackgroundColor = ''
+        if ($globalRow -lt $layout.ListPane.H) {
+            if ($globalRow -eq 0) {
+                $rightSegments = Build-BoxTopSegments -Title '[Ideas]' -Width $layout.ListPane.W -BorderColor $ideaBorderColor -TitleColor $ideaTitleColor
+            } elseif ($globalRow -eq ($layout.ListPane.H - 1)) {
+                $rightSegments = Build-BoxBottomSegments -Width $layout.ListPane.W -BorderColor $ideaBorderColor
+            } else {
+                $ideaInnerRow = $globalRow - 1
+                $ideaMarker = ' '
+                $ideaIndex = $State.Cursor.IdeaScrollTop + $ideaInnerRow
+                $idea = $null
+                if ($ideaIndex -lt $State.Derived.VisibleIdeaIds.Count) {
+                    $ideaId = $State.Derived.VisibleIdeaIds[$ideaIndex]
+                    $idea = Get-IdeaById -Ideas $State.Data.AllIdeas -Id $ideaId
+                    if ($State.Cursor.IdeaIndex -eq $ideaIndex) {
+                        $ideaMarker = '>'
+                    } elseif ($null -ne $ideaThumb) {
+                        if ($ideaInnerRow -ge $ideaThumb.Start -and $ideaInnerRow -le $ideaThumb.End) {
+                            $ideaMarker = $SCROLLBAR_THUMB_GLYPH
+                        } else {
+                            $ideaMarker = $SCROLLBAR_TRACK_GLYPH
+                        }
+                    }
+                } elseif ($null -ne $ideaThumb) {
+                    if ($ideaInnerRow -ge $ideaThumb.Start -and $ideaInnerRow -le $ideaThumb.End) {
+                        $ideaMarker = $SCROLLBAR_THUMB_GLYPH
+                    } else {
+                        $ideaMarker = $SCROLLBAR_TRACK_GLYPH
+                    }
+                }
 
-        $ideaMarker = ' '
-        $ideaIndex = $State.Cursor.IdeaScrollTop + $row
-        $idea = $null
-        if ($ideaIndex -lt $State.Derived.VisibleIdeaIds.Count) {
-            $ideaId = $State.Derived.VisibleIdeaIds[$ideaIndex]
-            $idea = Get-IdeaById -Ideas $State.Data.AllIdeas -Id $ideaId
-            if ($State.Cursor.IdeaIndex -eq $ideaIndex) {
-                $ideaMarker = '>'
-            } elseif ($null -ne $ideaThumb) {
-                if ($row -ge $ideaThumb.Start -and $row -le $ideaThumb.End) {
-                    $ideaMarker = $SCROLLBAR_THUMB_GLYPH
-                } else {
-                    $ideaMarker = $SCROLLBAR_TRACK_GLYPH
+                $isSelectedIdea = ($ideaIndex -lt $State.Derived.VisibleIdeaIds.Count -and $State.Cursor.IdeaIndex -eq $ideaIndex -and $null -ne $idea)
+                $ideaInnerSegments = Build-IdeaSegments -Marker $ideaMarker -Idea $idea -IsSelected $isSelectedIdea
+                $rightSegments = Build-BorderedRowSegments -InnerSegments $ideaInnerSegments -Width $layout.ListPane.W -BorderColor $ideaBorderColor
+                if ($isSelectedIdea) {
+                    $rightBackgroundColor = 'DarkCyan'
                 }
             }
-        } elseif ($null -ne $ideaThumb) {
-            if ($row -ge $ideaThumb.Start -and $row -le $ideaThumb.End) {
-                $ideaMarker = $SCROLLBAR_THUMB_GLYPH
+        } elseif ($globalRow -eq $layout.ListPane.H) {
+            $rightSegments = @(
+                @{ Text = (' ' * $layout.DetailPane.W); Color = 'DarkGray' }
+            )
+        } else {
+            $detailLocalRow = $globalRow - $layout.ListPane.H - 1
+            if ($detailLocalRow -eq 0) {
+                $rightSegments = Build-BoxTopSegments -Title '[Details]' -Width $layout.DetailPane.W -BorderColor $detailBorderColor -TitleColor $detailTitleColor
+            } elseif ($detailLocalRow -eq ($layout.DetailPane.H - 1)) {
+                $rightSegments = Build-BoxBottomSegments -Width $layout.DetailPane.W -BorderColor $detailBorderColor
             } else {
-                $ideaMarker = $SCROLLBAR_TRACK_GLYPH
+                $detailContentRow = $detailLocalRow - 1
+                $detailInnerSegments = @()
+                if ($detailContentRow -lt $detailRows) {
+                    if ($detailContentRow -lt $detailSegments.Count) {
+                        $detailInnerSegments = @($detailSegments[$detailContentRow])
+                    }
+                }
+                $rightSegments = Build-BorderedRowSegments -InnerSegments $detailInnerSegments -Width $layout.DetailPane.W -BorderColor $detailBorderColor
             }
         }
 
-        $isSelectedIdea = ($ideaIndex -lt $State.Derived.VisibleIdeaIds.Count -and $State.Cursor.IdeaIndex -eq $ideaIndex -and $null -ne $idea)
-        $ideaSegments = Build-IdeaSegments -Marker $ideaMarker -Idea $idea -IsSelected $isSelectedIdea
-
-        Write-ColorSegments -Segments $tagSegments -Width $layout.TagPane.W -NoNewline
+        Write-ColorSegments -Segments $leftSegments -Width $layout.TagPane.W -NoNewline
         Write-Host ' ' -NoNewline
-        if ($isSelectedIdea) {
-            Write-ColorSegments -Segments $ideaSegments -Width $layout.ListPane.W -BackgroundColor 'DarkCyan'
+        if ([string]::IsNullOrEmpty($rightBackgroundColor)) {
+            Write-ColorSegments -Segments $rightSegments -Width $layout.ListPane.W
         } else {
-            Write-ColorSegments -Segments $ideaSegments -Width $layout.ListPane.W
+            Write-ColorSegments -Segments $rightSegments -Width $layout.ListPane.W -BackgroundColor $rightBackgroundColor
         }
-        $tagRowOffset++
-    }
-
-    $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-    $tagRow = Get-TagRowModel -State $State -TagIndex $tagIndex -TagRowOffset $tagRowOffset -TagThumb $tagThumb
-    $tagSegments = Build-TagSegments -TagText $tagRow.Text -TagMarker $tagRow.Marker -TagColor $tagRow.Color
-    Write-ColorSegments -Segments $tagSegments -Width $layout.TagPane.W -NoNewline
-    Write-Host ' ' -NoNewline
-    Write-Host (Write-TruncatedLine -Text '[Details]' -Width $layout.DetailPane.W) -ForegroundColor DarkGray
-    $tagRowOffset++
-
-    for ($row = 0; $row -lt $detailRows; $row++) {
-        $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-        $tagRow = Get-TagRowModel -State $State -TagIndex $tagIndex -TagRowOffset $tagRowOffset -TagThumb $tagThumb
-        $tagSegments = Build-TagSegments -TagText $tagRow.Text -TagMarker $tagRow.Marker -TagColor $tagRow.Color
-        $detailRowSegments = @()
-        if ($row -lt $detailSegments.Count) {
-            $detailRowSegments = @($detailSegments[$row])
-        }
-
-        Write-ColorSegments -Segments $tagSegments -Width $layout.TagPane.W -NoNewline
-        Write-Host ' ' -NoNewline
-        Write-ColorSegments -Segments $detailRowSegments -Width $layout.DetailPane.W
-        $tagRowOffset++
     }
 
     $hideMode = if ($State.Ui.HideUnavailableTags) { 'On' } else { 'Off' }
     $status = "Total: $($State.Data.AllIdeas.Count) | Filtered: $($State.Derived.VisibleIdeaIds.Count) | Selected Tags: $($State.Query.SelectedTags.Count) | HideUnavailable: $hideMode | [Tab] Switch [Space] Toggle [PgUp/PgDn] Page [Home/End] Jump [H] Hide [Q] Quit"
-    Write-Host (Write-TruncatedLine -Text $status -Width $layout.StatusPane.W) -ForegroundColor DarkGray
+    Write-Host (Write-TruncatedLine -Text $status -Width $layout.StatusPane.W) -ForegroundColor DarkGray -NoNewline
 
     try { [Console]::CursorVisible = $false } catch {}
     try { [Console]::SetCursorPosition(0, 0) } catch {}

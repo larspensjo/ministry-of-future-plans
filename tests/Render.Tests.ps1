@@ -81,6 +81,17 @@ Describe 'Write-ColorSegments' {
         It 'returns empty output when width is non-positive' {
             (Write-ColorSegments -Segments @(@{ Text = 'a'; Color = 'Red' }) -Width 0 -NoEmit).Count | Should -Be 0
         }
+
+        It 'flattens nested segment arrays' {
+            $segments = @(
+                @(
+                    @{ Text = 'A'; Color = 'Gray' },
+                    @{ Text = 'B'; Color = 'Gray' }
+                )
+            )
+            $result = Write-ColorSegments -Segments $segments -Width 4 -NoEmit
+            (($result | ForEach-Object { $_.Text }) -join '') | Should -Be 'AB  '
+        }
     }
 }
 
@@ -135,6 +146,33 @@ Describe 'Segment builders' {
             $rows[2][1].Text | Should -Be ''
             $rows[4][1].Text | Should -Be ''
             $rows[5][1].Text | Should -Be ''
+        }
+    }
+}
+
+Describe 'Box helpers' {
+    InModuleScope 'Render' {
+        It 'builds a top border with rounded corners and centered title' {
+            $segments = Build-BoxTopSegments -Title '[Tags]' -Width 12 -BorderColor 'DarkGray' -TitleColor 'Cyan'
+            $text = ($segments | ForEach-Object { $_.Text }) -join ''
+            $text.Length | Should -Be 12
+            $text[0] | Should -Be '╭'
+            $text[11] | Should -Be '╮'
+            $text | Should -Match '\[Tags\]'
+        }
+
+        It 'builds a bottom border with rounded corners' {
+            $segments = Build-BoxBottomSegments -Width 10 -BorderColor 'DarkGray'
+            $text = ($segments | ForEach-Object { $_.Text }) -join ''
+            $text | Should -Be '╰────────╯'
+        }
+
+        It 'builds bordered rows with vertical side rails' {
+            $segments = Build-BorderedRowSegments -InnerSegments @(@{ Text = 'abc'; Color = 'Gray' }) -Width 8 -BorderColor 'DarkGray'
+            $text = ($segments | ForEach-Object { $_.Text }) -join ''
+            $text.Length | Should -Be 8
+            $text[0] | Should -Be '│'
+            $text[7] | Should -Be '│'
         }
     }
 }
