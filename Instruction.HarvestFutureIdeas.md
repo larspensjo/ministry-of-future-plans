@@ -1,167 +1,132 @@
-# Instruction Document — Harvest Future Ideas into `docs/FutureIdeas.md`
+# Instruction Document — Initialize and Harvest `FutureIdeas.md`
 
-Version: 2026-02-12
-Purpose: Define a repeatable, low-noise procedure for extracting “future ideas” from a completed/superseded plan document and producing an incremental patch to the canonical backlog.
+Version: 2026-02-14
+Purpose: Define one workflow for:
+1. Creating a new `FutureIdeas.md` from template (first-time setup).
+2. Incrementally harvesting deferred ideas into an existing `FutureIdeas.md`.
 
-## Output Contract
+## Source of Truth
 
-Output **only** a patch-style result, structured as:
+Use these documents in this order:
+1. `docs/FutureIdeas-template.md`:
+   - Canonical file structure.
+   - Canonical entry shape and field names.
+   - Taxonomy section placement.
+2. This instruction document:
+   - Process rules.
+   - Dedup/merge rules.
+   - Output format by mode.
 
-- `Adds:` New future-idea entries to append.
-- `Updates:` Modifications to existing entries (identified by ID).
-- `Merges:` Duplicate/overlapping entries to merge (which ID to keep, which to deprecate).
-- `Uncertain:` Items that require user decision (taxonomy unclear, ambiguous duplicates, unclear scope, etc.).
+If this document and the template overlap, prefer the template for structure/format and this document for workflow behavior.
 
-Do **not** rewrite `FutureIdeas.md` in full.
+## Mode Selection
 
-## Ordering and Headers (FutureIdeas.md)
+Choose mode before writing output:
 
-`FutureIdeas.md` is organized and **sorted** by:
+- `Initialize` mode:
+  - Use when target `FutureIdeas.md` does not exist yet.
+  - Output is a full file content based on the template.
+- `Harvest` mode:
+  - Use when target `FutureIdeas.md` already exists.
+  - Output is patch-only (`Adds`, `Updates`, `Merges`, `Uncertain`).
+  - Do not rewrite the entire file.
 
-1. Major key: `TopLevel`
-2. Minor key: `SubLevel`
+## Definition — “Future Idea”
 
-Required header structure:
-
-- `## <TopLevel>`
-- `### <SubLevel>`
-- Entries under each sublevel use `#### [FI-...] <Title>`
-
-The `## Taxonomy` section must remain at the top of the file (above all idea groups).
-
-## Definition — “Future idea”
-
-A “future idea” is any item that implies deferred work or potential improvement, including:
-
-- Explicit: “future”, “later”, “phase 2”, “nice to have”, “would be good if”
-- TODOs / follow-ups that are not required to complete the current plan
-- Enhancements, refactors, optimizations, polish, tooling, tests, UX, docs, metrics
-- Risk mitigations and robustness improvements that were postponed
-- Architectural extensions and optional features
+A future idea is deferred, optional, or next-phase work such as:
+- explicit “future/later/phase 2”
+- postponed robustness/performance/tooling/docs work
+- UX and architecture extensions
+- TODOs not required for current plan completion
 
 Exclude:
-- Completed work already implemented in the plan
-- Purely historical notes with no actionable proposal
-- Items that are trivial and already covered by existing entries (merge instead)
+- work already implemented
+- historical notes without actionable follow-up
+- trivial duplicates already covered by existing entries
 
-## Canonical Entry Format (must match)
+## Taxonomy Rules
 
-Each future idea must be emitted as a Markdown block:
+- Two levels are mandatory: `TopLevel` and `SubLevel`.
+- Taxonomy table under `## Taxonomy` is the local authority for valid combinations.
+- Keep naming stable and codebase-relevant (avoid one-off labels).
+- If classification is unclear, place candidate in `Uncertain` with 1-3 options.
 
-```md
-### [FI-<TopLevel>-<SubLevel>-NNNN] <Title>
-Status: Candidate
-TopLevel: <TopLevel>
-SubLevel: <SubLevel>
-Priority: P0|P1|P2|P3
-Effort: S|M|L|XL
-Risk: L|M|H
-Origin:
-- SourceDoc: <filename>
-- SourceSection: <heading or context>
-- Captured: <YYYY-MM-DD>
-Tags: [tag1, tag2, ...]
-Summary: <1–3 sentences>
-Rationale: <why it matters>
-SuccessCriteria:
-- <testable outcome 1>
-- <testable outcome 2>
-Dependencies: [optional, ...]
-Related: [optional FI-ids...]
-Notes: <optional>
-```
+## Priority / Effort / Risk Heuristics
 
-Rules:
-- Keep titles short and specific.
-- `Summary` should be concrete, not marketing language.
-- `SuccessCriteria` must be testable/observable.
-- If `Dependencies` or `Related` are unknown, omit them rather than guessing.
+Priority:
+- `P0`: correctness/safety/security blocker
+- `P1`: high leverage, likely near-term
+- `P2`: useful medium-priority improvement
+- `P3`: speculative or nice-to-have
 
-## Taxonomy Rules (TopLevel/SubLevel)
+Effort:
+- `S`: hours to 1 day
+- `M`: 2-5 days
+- `L`: 1-3 weeks
+- `XL`: multi-week/cross-cutting
 
-### Two-tier taxonomy is mandatory
-- `TopLevel` is a broad domain (e.g., Graphics, Simulation, Tooling, UX, BuildAndCI, Docs).
-- `SubLevel` is a stable, codebase-relevant area (e.g., LakeRendering, ShadowMaps, LogIngestion).
+Risk:
+- `L`: straightforward
+- `M`: some integration/unknowns
+- `H`: high uncertainty or correctness sensitivity
 
-### Taxonomy source of truth
-- If `Taxonomy.FutureIdeas.md` exists, use it.
-- If it does not exist:
-  - Infer a minimal set of TopLevels (5–10 max).
-  - Use consistent SubLevels that resemble code/module names.
-  - Prefer stable names over “one-off” labels.
+If unclear: default to `Risk: M` and state uncertainty in `Notes`.
 
-### When uncertain
-Put the item into `Uncertain:` and propose 1–3 taxonomy options.
+## Deduplication and Merge Rules
 
-## Priority/Effort/Risk Heuristics
+Before creating new entries:
+1. Check existing `FutureIdeas.md` for semantic duplicates.
+2. If same idea exists, prefer `Updates` over `Adds`.
+3. If two entries overlap heavily, use `Merges` and keep the strongest ID.
+4. If related but distinct, keep both and add `Related`.
 
-These are heuristics; avoid false precision.
+Never hard-delete entries; resolve via merge instructions.
 
-### Priority
-- P0: blocks correctness/safety/security or severe user pain
-- P1: high impact, strong leverage, likely soon
-- P2: useful improvement, moderate value or timing
-- P3: nice-to-have or speculative
+## Procedure
 
-### Effort
-- S: hours to 1 day
-- M: 2–5 days
-- L: 1–3 weeks
-- XL: multi-week / cross-cutting
+1. Scan source docs for deferred/future signals.
+2. Collect candidate notes (raw, internal).
+3. Normalize to template-compliant entries.
+4. Classify into taxonomy.
+5. Deduplicate against existing ideas (Harvest mode).
+6. Emit output in the required mode format.
 
-### Risk
-- L: straightforward, familiar patterns
-- M: some unknowns, integration concerns
-- H: researchy, sensitive performance/correctness, unclear feasibility
+## Output Contract by Mode
 
-If truly unclear: set conservative Risk=M and add a `Notes:` line explaining what is unknown.
+### Initialize Mode Output
 
-## Deduplication and Merging Rules
+Output a complete `FutureIdeas.md` document:
+- Must start from `docs/FutureIdeas-template.md`.
+- Must retain `## Taxonomy` at top.
+- Must follow heading structure from template:
+  - `## <TopLevel>`
+  - `### <SubLevel>`
+  - `#### [FI-...] <Title>`
+- Must sort sections by `TopLevel`, then `SubLevel`.
 
-Before creating `Adds`, check existing entries in `FutureIdeas.md`:
+### Harvest Mode Output
 
-1. If the same idea exists:
-   - Prefer `Updates:` to enrich the existing entry (better title, criteria, origin, tags).
-2. If two entries overlap heavily:
-   - Use `Merges:` and choose the most stable/best ID to keep.
-3. If related but distinct:
-   - Keep separate and add `Related:` links.
+Output only:
+- `Adds`
+- `Updates`
+- `Merges`
+- `Uncertain`
 
-Do not delete entries outright; use merge instructions instead.
+Do not output full-file rewrites.
 
-## Extraction Procedure
-
-1. **Scan** the plan for future-oriented signals:
-   - sections labeled “Future”, “Later”, “Ideas”, “Next”, “Improvements”
-   - TODOs that are not required to finish the plan
-   - “Would be nice”, “We should”, “Eventually”, “Could”
-2. **Collect candidate ideas** verbatim as raw notes (internally).
-3. **Normalize** each candidate into canonical entry format.
-4. **Classify** using taxonomy rules.
-5. **Deduplicate** against `FutureIdeas.md`.
-6. **Emit patch** with Adds/Updates/Merges/Uncertain.
-
-## Style and Quality Constraints
-
-- Be concise: prefer fewer, higher-quality ideas over many vague ones.
-- Avoid duplicates and avoid near-identical phrasing across entries.
-- Use consistent terminology (module names, feature names).
-- No invented facts: do not assume architecture details not present in inputs.
-- Always include `Origin` fields.
-
-## Patch Output Template
+Patch template:
 
 ```md
 # Patch
 
 ## Adds
-<zero or more canonical FI blocks>
+<zero or more full entry blocks>
 
 ## Updates
 - Target: [FI-...]
   Changes:
-  - <specific field edit>
-  - <specific field edit>
+  - <field-level change>
+  - <field-level change>
   Notes: <optional>
 
 ## Merges
@@ -176,20 +141,29 @@ Do not delete entries outright; use merge instructions instead.
   - <option 1>
   - <option 2>
   Proposed entry draft:
-  <canonical FI block draft>
+  <template-compliant entry>
 ```
 
-## Non-Goals
+## ID Rules
 
-- Do not propose implementation code.
-- Do not expand into a full roadmap.
-- Do not rewrite the plan.
-- Do not reformat existing `FutureIdeas.md` entries except via explicit `Updates:`.
+- Use format: `FI-<TopLevel>-<SubLevel>-NNNN`.
+- If the file already has numbering, continue the sequence within that bucket.
+- If reliable numbering cannot be determined, use `0000` and list in `Uncertain` for assignment.
 
-## Optional: Idea ID Guidance
+## Quality Constraints
 
-If new IDs are needed:
+- Prefer fewer, concrete, testable ideas over many vague ones.
+- Keep titles short and specific.
+- Keep `Summary` concrete and `SuccessCriteria` observable.
+- Always include `Origin` (`SourceDoc`, `SourceSection`, `Captured`).
+- Do not invent facts not present in source documents.
 
-- Use: `FI-<TopLevel>-<SubLevel>-NNNN`
-- If `FutureIdeas.md` contains existing numbering, continue it.
-- If numbering cannot be determined reliably, use `NNNN=0000` and list in `Uncertain` with a note: “Needs ID assignment.”
+## Validation Gate
+
+After updating/creating `FutureIdeas.md`, run:
+
+```powershell
+.\ministry-of-future-plans\Validate.ps1 -IdeasPath .\ministry-of-future-plans\docs\FutureIdeas.md
+```
+
+For project-root ideas files, adjust `-IdeasPath` accordingly.
