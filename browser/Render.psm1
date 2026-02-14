@@ -8,6 +8,7 @@ $BOX_BOTTOM_LEFT = '╰'
 $BOX_BOTTOM_RIGHT = '╯'
 $BOX_HORIZONTAL = '─'
 $BOX_VERTICAL = '│'
+$script:PreviousFrame = $null
 
 function Get-PropertyValueOrDefault {
     param(
@@ -542,22 +543,245 @@ function Build-BorderedRowSegments {
     Write-Output -NoEnumerate $segments
 }
 
-function Render-BrowserState {
+function Merge-AdjacentSegments {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Segments
+    )
+
+    $flatSegments = @()
+    foreach ($item in @($Segments)) {
+        if ($null -eq $item) {
+            continue
+        }
+
+        if (($item -is [System.Array]) -and -not ($item -is [string])) {
+            foreach ($child in @($item)) {
+                $flatSegments += $child
+            }
+            continue
+        }
+
+        $flatSegments += $item
+    }
+
+    if ($flatSegments.Count -le 1) {
+        Write-Output -NoEnumerate $flatSegments
+        return
+    }
+
+    $merged = [System.Collections.Generic.List[object]]::new()
+    $current = @{
+        Text = [string](Get-PropertyValueOrDefault -Object $flatSegments[0] -Name 'Text' -Default '')
+        Color = [string](Get-PropertyValueOrDefault -Object $flatSegments[0] -Name 'Color' -Default 'Gray')
+        BackgroundColor = [string](Get-PropertyValueOrDefault -Object $flatSegments[0] -Name 'BackgroundColor' -Default '')
+    }
+
+    for ($i = 1; $i -lt $flatSegments.Count; $i++) {
+        $next = $flatSegments[$i]
+        $nextText = [string](Get-PropertyValueOrDefault -Object $next -Name 'Text' -Default '')
+        $nextColor = [string](Get-PropertyValueOrDefault -Object $next -Name 'Color' -Default 'Gray')
+        $nextBackground = [string](Get-PropertyValueOrDefault -Object $next -Name 'BackgroundColor' -Default '')
+
+        if ($current.Color -eq $nextColor -and $current.BackgroundColor -eq $nextBackground) {
+            $current.Text += $nextText
+            continue
+        }
+
+        $merged.Add($current)
+        $current = @{
+            Text = $nextText
+            Color = $nextColor
+            BackgroundColor = $nextBackground
+        }
+    }
+
+    $merged.Add($current)
+    Write-Output -NoEnumerate $merged.ToArray()
+}
+
+function Normalize-FrameSegments {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Segments,
+        [Parameter(Mandatory = $true)][int]$Width
+    )
+
+    if ($Width -le 0) {
+        Write-Output -NoEnumerate @()
+        return
+    }
+
+    $normalizedSegments = @()
+    $remaining = $Width
+    $segmentItems = @()
+    foreach ($item in @($Segments)) {
+        if ($null -eq $item) {
+            continue
+        }
+
+        if (($item -is [System.Array]) -and -not ($item -is [string])) {
+            foreach ($child in @($item)) {
+                $segmentItems += $child
+            }
+            continue
+        }
+
+        $segmentItems += $item
+    }
+
+    foreach ($segment in $segmentItems) {
+        if ($remaining -le 0) {
+            break
+        }
+
+        $text = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Text' -Default '')
+        if ($text.Length -eq 0) {
+            continue
+        }
+
+        $color = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Color' -Default 'Gray')
+        if ([string]::IsNullOrWhiteSpace($color)) {
+            $color = 'Gray'
+        }
+        $backgroundColor = [string](Get-PropertyValueOrDefault -Object $segment -Name 'BackgroundColor' -Default '')
+
+        if ($text.Length -le $remaining) {
+            $normalizedSegments += @{
+                Text = $text
+                Color = $color
+                BackgroundColor = $backgroundColor
+            }
+            $remaining -= $text.Length
+            continue
+        }
+
+        $normalizedSegments += @{
+            Text = (Write-TruncatedLine -Text $text -Width $remaining)
+            Color = $color
+            BackgroundColor = $backgroundColor
+        }
+        $remaining = 0
+    }
+
+    if ($remaining -gt 0) {
+        $normalizedSegments += @{
+            Text = (' ' * $remaining)
+            Color = 'Gray'
+            BackgroundColor = ''
+        }
+    }
+
+    Write-Output -NoEnumerate $normalizedSegments
+}
+
+function Get-FrameRowSignature {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Segments
+    )
+
+    $parts = foreach ($segment in $Segments) {
+        $color = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Color' -Default 'Gray')
+        $background = [string](Get-PropertyValueOrDefault -Object $segment -Name 'BackgroundColor' -Default '')
+        $text = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Text' -Default '')
+        "$color|$background|$text"
+    }
+
+    return ($parts -join "`0")
+}
+
+function Compose-FrameRow {
+    param(
+        [Parameter(Mandatory = $true)][int]$Y,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$LeftSegments,
+        [Parameter(Mandatory = $true)][int]$LeftWidth,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$RightSegments,
+        [Parameter(Mandatory = $true)][int]$RightWidth,
+        [AllowEmptyString()][string]$RightBackgroundColor = '',
+        [Parameter(Mandatory = $true)][int]$TotalWidth,
+        [Parameter(Mandatory = $true)][bool]$IsLastRow
+    )
+
+    $normalizedLeft = Write-ColorSegments -Segments $LeftSegments -Width $LeftWidth -NoEmit
+    $normalizedRight = Write-ColorSegments -Segments $RightSegments -Width $RightWidth -NoEmit
+
+    $leftWithBackground = @(foreach ($segment in $normalizedLeft) {
+        @{
+            Text = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Text' -Default '')
+            Color = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Color' -Default 'Gray')
+            BackgroundColor = ''
+        }
+    })
+
+    $rightWithBackground = @(foreach ($segment in $normalizedRight) {
+        @{
+            Text = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Text' -Default '')
+            Color = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Color' -Default 'Gray')
+            BackgroundColor = $RightBackgroundColor
+        }
+    })
+
+    $gapSegment = @{
+        Text = ' '
+        Color = 'Gray'
+        BackgroundColor = ''
+    }
+
+    $effectiveWidth = if ($IsLastRow) { [Math]::Max(0, $TotalWidth - 1) } else { [Math]::Max(0, $TotalWidth) }
+    $fullSegments = @()
+    $fullSegments += $leftWithBackground
+    $fullSegments += @($gapSegment)
+    $fullSegments += $rightWithBackground
+    $normalizedFull = Normalize-FrameSegments -Segments $fullSegments -Width $effectiveWidth
+    $mergedSegments = Merge-AdjacentSegments -Segments $normalizedFull
+    $signature = Get-FrameRowSignature -Segments $mergedSegments
+
+    return [pscustomobject]@{
+        Y = $Y
+        Segments = $mergedSegments
+        Signature = $signature
+    }
+}
+
+function Build-StatusBarRow {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)]$Layout
+    )
+
+    $hideMode = if ($State.Ui.HideUnavailableTags) { 'On' } else { 'Off' }
+    $statusText = "Total: $($State.Data.AllIdeas.Count) | Filtered: $($State.Derived.VisibleIdeaIds.Count) | Selected Tags: $($State.Query.SelectedTags.Count) | HideUnavailable: $hideMode | [Tab] Switch [Space] Toggle [PgUp/PgDn] Page [Home/End] Jump [H] Hide [Q] Quit"
+    $statusWidth = [Math]::Max(0, $Layout.StatusPane.W - 1)
+
+    $segments = Write-ColorSegments -Segments @(@{
+        Text = $statusText
+        Color = 'DarkGray'
+        BackgroundColor = ''
+    }) -Width $statusWidth -NoEmit
+
+    $statusSegments = foreach ($segment in $segments) {
+        @{
+            Text = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Text' -Default '')
+            Color = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Color' -Default 'Gray')
+            BackgroundColor = ''
+        }
+    }
+
+    $mergedSegments = Merge-AdjacentSegments -Segments $statusSegments
+    $signature = Get-FrameRowSignature -Segments $mergedSegments
+
+    return [pscustomobject]@{
+        Y = $Layout.StatusPane.Y
+        Segments = $mergedSegments
+        Signature = $signature
+    }
+}
+
+function Build-FrameFromState {
     param(
         [Parameter(Mandatory = $true)]$State
     )
 
     $layout = $State.Ui.Layout
-
-    try { [Console]::CursorVisible = $false } catch {}
-    try { [Console]::SetCursorPosition(0, 0) } catch {}
-    Clear-Host
-
-    if ($layout.Mode -eq 'TooSmall') {
-        Write-Host ("Window too small. Need at least {0}x{1}." -f $layout.MinWidth, $layout.MinHeight) -ForegroundColor Yellow
-        Write-Host "Resize window. Press Q to quit." -ForegroundColor Yellow
-        return
-    }
+    $rows = [System.Collections.Generic.List[object]]::new($layout.Height)
 
     $tagBorderColor = Get-PaneBorderColor -PaneName 'Tags' -State $State
     $ideaBorderColor = Get-PaneBorderColor -PaneName 'Ideas' -State $State
@@ -657,21 +881,109 @@ function Render-BrowserState {
             }
         }
 
-        Write-ColorSegments -Segments $leftSegments -Width $layout.TagPane.W -NoNewline
-        Write-Host ' ' -NoNewline
-        if ([string]::IsNullOrEmpty($rightBackgroundColor)) {
-            Write-ColorSegments -Segments $rightSegments -Width $layout.ListPane.W
-        } else {
-            Write-ColorSegments -Segments $rightSegments -Width $layout.ListPane.W -BackgroundColor $rightBackgroundColor
+        $row = Compose-FrameRow -Y $globalRow -LeftSegments $leftSegments -LeftWidth $layout.TagPane.W -RightSegments $rightSegments -RightWidth $layout.ListPane.W -RightBackgroundColor $rightBackgroundColor -TotalWidth $layout.Width -IsLastRow $false
+        $rows.Add($row)
+    }
+
+    $rows.Add((Build-StatusBarRow -State $State -Layout $layout))
+
+    return [pscustomobject]@{
+        Width = $layout.Width
+        Height = $layout.Height
+        Rows = $rows.ToArray()
+    }
+}
+
+function Get-FrameDiff {
+    param(
+        [AllowNull()]$PreviousFrame,
+        [Parameter(Mandatory = $true)]$NextFrame
+    )
+
+    if ($null -eq $PreviousFrame) {
+        Write-Output -NoEnumerate $NextFrame.Rows
+        return
+    }
+
+    if ($PreviousFrame.Width -ne $NextFrame.Width -or $PreviousFrame.Height -ne $NextFrame.Height) {
+        Write-Output -NoEnumerate $NextFrame.Rows
+        return
+    }
+
+    $changed = [System.Collections.Generic.List[object]]::new()
+    for ($i = 0; $i -lt $NextFrame.Height; $i++) {
+        if ($NextFrame.Rows[$i].Signature -ne $PreviousFrame.Rows[$i].Signature) {
+            $changed.Add($NextFrame.Rows[$i])
         }
     }
 
-    $hideMode = if ($State.Ui.HideUnavailableTags) { 'On' } else { 'Off' }
-    $status = "Total: $($State.Data.AllIdeas.Count) | Filtered: $($State.Derived.VisibleIdeaIds.Count) | Selected Tags: $($State.Query.SelectedTags.Count) | HideUnavailable: $hideMode | [Tab] Switch [Space] Toggle [PgUp/PgDn] Page [Home/End] Jump [H] Hide [Q] Quit"
-    Write-Host (Write-TruncatedLine -Text $status -Width $layout.StatusPane.W) -ForegroundColor DarkGray -NoNewline
+    Write-Output -NoEnumerate $changed.ToArray()
+}
 
-    try { [Console]::CursorVisible = $false } catch {}
-    try { [Console]::SetCursorPosition(0, 0) } catch {}
+function Flush-FrameDiff {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$ChangedRows,
+        [Parameter(Mandatory = $true)]$Frame
+    )
+
+    if ($ChangedRows.Count -eq 0) {
+        return $true
+    }
+
+    try {
+        [Console]::CursorVisible = $false
+
+        foreach ($row in $ChangedRows) {
+            if ($row.Y -lt 0 -or $row.Y -ge $Frame.Height) {
+                continue
+            }
+
+            [Console]::SetCursorPosition(0, $row.Y)
+            foreach ($segment in $row.Segments) {
+                $writeArgs = @{
+                    Object = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Text' -Default '')
+                    ForegroundColor = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Color' -Default 'Gray')
+                    NoNewline = $true
+                }
+
+                $backgroundColor = [string](Get-PropertyValueOrDefault -Object $segment -Name 'BackgroundColor' -Default '')
+                if (-not [string]::IsNullOrWhiteSpace($backgroundColor)) {
+                    $writeArgs['BackgroundColor'] = $backgroundColor
+                }
+
+                Write-Host @writeArgs
+            }
+        }
+
+        [Console]::SetCursorPosition(0, 0)
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Render-BrowserState {
+    param(
+        [Parameter(Mandatory = $true)]$State
+    )
+
+    $layout = $State.Ui.Layout
+
+    if ($layout.Mode -eq 'TooSmall') {
+        $script:PreviousFrame = $null
+        Clear-Host
+        Write-Host ("Window too small. Need at least {0}x{1}." -f $layout.MinWidth, $layout.MinHeight) -ForegroundColor Yellow
+        Write-Host "Resize window. Press Q to quit." -ForegroundColor Yellow
+        return
+    }
+
+    $nextFrame = Build-FrameFromState -State $State
+    $changedRows = Get-FrameDiff -PreviousFrame $script:PreviousFrame -NextFrame $nextFrame
+    $flushOk = Flush-FrameDiff -ChangedRows $changedRows -Frame $nextFrame
+    if ($flushOk) {
+        $script:PreviousFrame = $nextFrame
+    }
 }
 
 Export-ModuleMember -Function Get-ScrollThumb, Render-BrowserState
