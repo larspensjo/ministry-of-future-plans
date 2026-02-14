@@ -1,8 +1,7 @@
+$modulePath = Join-Path $PSScriptRoot '..\browser\Render.psm1'
+Import-Module $modulePath -Force
+
 Describe 'Get-ScrollThumb' {
-    BeforeAll {
-        $modulePath = Join-Path $PSScriptRoot '..\browser\Render.psm1'
-        Import-Module $modulePath -Force
-    }
 
     It 'returns null when content fits viewport' {
         $thumb = Get-ScrollThumb -TotalItems 10 -ViewRows 10 -ScrollTop 0
@@ -25,5 +24,117 @@ Describe 'Get-ScrollThumb' {
     It 'clamps thumb at bottom when scroll top exceeds max' {
         $thumb = Get-ScrollThumb -TotalItems 40 -ViewRows 10 -ScrollTop 999
         $thumb.End | Should -Be 9
+    }
+}
+
+Describe 'Color helpers' {
+    InModuleScope 'Render' {
+        It 'maps priority values to semantic colors' {
+            Get-PriorityColor -Priority 'P0' | Should -Be 'Red'
+            Get-PriorityColor -Priority 'P1' | Should -Be 'Red'
+            Get-PriorityColor -Priority 'P2' | Should -Be 'Yellow'
+            Get-PriorityColor -Priority 'P3' | Should -Be 'DarkCyan'
+            Get-PriorityColor -Priority 'UNKNOWN' | Should -Be 'Gray'
+        }
+
+        It 'maps risk values to semantic colors' {
+            Get-RiskColor -Risk 'H' | Should -Be 'Red'
+            Get-RiskColor -Risk 'M' | Should -Be 'Yellow'
+            Get-RiskColor -Risk 'L' | Should -Be 'DarkGray'
+            Get-RiskColor -Risk 'UNKNOWN' | Should -Be 'Gray'
+        }
+
+        It 'maps marker glyphs with cursor precedence' {
+            Get-MarkerColor -Marker '>' | Should -Be 'Cyan'
+            Get-MarkerColor -Marker '░' | Should -Be 'Gray'
+            Get-MarkerColor -Marker '│' | Should -Be 'DarkGray'
+            Get-MarkerColor -Marker ' ' | Should -Be 'DarkGray'
+        }
+    }
+}
+
+Describe 'Write-ColorSegments' {
+    InModuleScope 'Render' {
+        It 'pads content to requested width' {
+            $result = Write-ColorSegments -Segments @(
+                @{ Text = 'Hi'; Color = 'Red' }
+            ) -Width 5 -NoEmit
+            ($result | ForEach-Object { $_.Text.Length } | Measure-Object -Sum).Sum | Should -Be 5
+        }
+
+        It 'truncates content using ellipsis policy' {
+            $result = Write-ColorSegments -Segments @(
+                @{ Text = 'ABCDEFGHIJ'; Color = 'Red' }
+            ) -Width 7 -NoEmit
+            $result.Count | Should -Be 1
+            $result[0].Text | Should -Be 'ABCD...'
+            ($result | ForEach-Object { $_.Text.Length } | Measure-Object -Sum).Sum | Should -Be 7
+        }
+
+        It 'returns blank segment when no content exists' {
+            $result = Write-ColorSegments -Segments @() -Width 4 -NoEmit
+            $result.Count | Should -Be 1
+            $result[0].Text | Should -Be '    '
+            $result[0].Color | Should -Be 'Gray'
+        }
+
+        It 'returns empty output when width is non-positive' {
+            (Write-ColorSegments -Segments @(@{ Text = 'a'; Color = 'Red' }) -Width 0 -NoEmit).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Segment builders' {
+    InModuleScope 'Render' {
+        It 'builds unselected idea segments with semantic colors' {
+            $idea = [pscustomobject]@{ Id = 'FI-1'; Title = 'Title' }
+            $segments = Build-IdeaSegments -Marker '│' -Idea $idea -IsSelected $false
+            $segments.Count | Should -Be 3
+            $segments[0].Color | Should -Be 'DarkGray'
+            $segments[1].Color | Should -Be 'DarkGray'
+            $segments[2].Color | Should -Be 'Gray'
+        }
+
+        It 'builds selected idea segments with focus colors' {
+            $idea = [pscustomobject]@{ Id = 'FI-2'; Title = 'Chosen' }
+            $segments = Build-IdeaSegments -Marker '>' -Idea $idea -IsSelected $true
+            $segments[0].Color | Should -Be 'Cyan'
+            $segments[1].Color | Should -Be 'DarkGray'
+            $segments[2].Color | Should -Be 'White'
+        }
+
+        It 'builds scrollbar-only row as marker segment' {
+            $segments = Build-IdeaSegments -Marker '░' -Idea $null -IsSelected $false
+            $segments.Count | Should -Be 1
+            $segments[0].Color | Should -Be 'Gray'
+        }
+
+        It 'builds detail rows with semantic label and value colors' {
+            $idea = [pscustomobject]@{
+                Id = 'FI-9'
+                Priority = 'P2'
+                Effort = 'M'
+                Risk = 'H'
+                Tags = @('alpha', 'beta')
+                Summary = 'Summary text'
+                Rationale = 'Rationale text'
+            }
+
+            $rows = Build-DetailSegments -Idea $idea
+            $rows.Count | Should -Be 6
+            $rows[0][0].Color | Should -Be 'DarkYellow'
+            $rows[0][1].Color | Should -Be 'DarkGray'
+            $rows[1][1].Color | Should -Be 'Yellow'
+            $rows[1][5].Color | Should -Be 'Red'
+        }
+
+        It 'handles missing detail fields safely' {
+            $idea = [pscustomobject]@{ Id = 'FI-empty' }
+            $rows = Build-DetailSegments -Idea $idea
+            $rows.Count | Should -Be 6
+            $rows[2][1].Text | Should -Be ''
+            $rows[4][1].Text | Should -Be ''
+            $rows[5][1].Text | Should -Be ''
+        }
     }
 }

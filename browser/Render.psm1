@@ -3,6 +3,32 @@ Set-StrictMode -Version Latest
 $SCROLLBAR_THUMB_GLYPH = '░'
 $SCROLLBAR_TRACK_GLYPH = '│'
 
+function Get-PropertyValueOrDefault {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()]$Object,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [AllowNull()]$Default = ''
+    )
+
+    if ($null -eq $Object) {
+        return $Default
+    }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name) -and $null -ne $Object[$Name]) {
+            return $Object[$Name]
+        }
+        return $Default
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return $Default
+    }
+
+    return $property.Value
+}
+
 function Get-IdeaById {
     param(
         [Parameter(Mandatory = $true)][object[]]$Ideas,
@@ -46,6 +72,114 @@ function Write-TruncatedLine {
     return $Text.Substring(0, $Width - 3) + '...'
 }
 
+function Get-PriorityColor {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Priority)
+
+    switch ($Priority) {
+        'P0' { return 'Red' }
+        'P1' { return 'Red' }
+        'P2' { return 'Yellow' }
+        'P3' { return 'DarkCyan' }
+        default { return 'Gray' }
+    }
+}
+
+function Get-RiskColor {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Risk)
+
+    switch ($Risk) {
+        'H' { return 'Red' }
+        'M' { return 'Yellow' }
+        'L' { return 'DarkGray' }
+        default { return 'Gray' }
+    }
+}
+
+function Get-MarkerColor {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Marker)
+
+    switch ($Marker) {
+        '>' { return 'Cyan' }
+        $SCROLLBAR_THUMB_GLYPH { return 'Gray' }
+        $SCROLLBAR_TRACK_GLYPH { return 'DarkGray' }
+        default { return 'DarkGray' }
+    }
+}
+
+function Write-ColorSegments {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Segments,
+        [Parameter(Mandatory = $true)][int]$Width,
+        [switch]$NoNewline,
+        [AllowEmptyString()][string]$BackgroundColor,
+        [switch]$NoEmit
+    )
+
+    if ($Width -le 0) {
+        if ($NoEmit) {
+            Write-Output -NoEnumerate @()
+        }
+        return
+    }
+
+    $normalizedSegments = @()
+    $remaining = $Width
+    $segmentItems = @($Segments)
+
+    foreach ($segment in $segmentItems) {
+        if ($remaining -le 0) {
+            break
+        }
+
+        $text = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Text' -Default '')
+        if ($text.Length -eq 0) {
+            continue
+        }
+
+        $color = [string](Get-PropertyValueOrDefault -Object $segment -Name 'Color' -Default 'Gray')
+        if ([string]::IsNullOrWhiteSpace($color)) {
+            $color = 'Gray'
+        }
+
+        if ($text.Length -le $remaining) {
+            $normalizedSegments += @{ Text = $text; Color = $color }
+            $remaining -= $text.Length
+            continue
+        }
+
+        $normalizedSegments += @{
+            Text = (Write-TruncatedLine -Text $text -Width $remaining)
+            Color = $color
+        }
+        $remaining = 0
+    }
+
+    if ($remaining -gt 0) {
+        $normalizedSegments += @{ Text = (' ' * $remaining); Color = 'Gray' }
+    }
+
+    if ($NoEmit) {
+        Write-Output -NoEnumerate $normalizedSegments
+        return
+    }
+
+    foreach ($segment in $normalizedSegments) {
+        $writeArgs = @{
+            Object = $segment.Text
+            ForegroundColor = $segment.Color
+            NoNewline = $true
+        }
+        if (-not [string]::IsNullOrWhiteSpace($BackgroundColor)) {
+            $writeArgs['BackgroundColor'] = $BackgroundColor
+        }
+        Write-Host @writeArgs
+    }
+
+    if (-not $NoNewline) {
+        Write-Host ''
+    }
+}
+
 function Get-ScrollThumb {
     param(
         [Parameter(Mandatory = $true)][int]$TotalItems,
@@ -80,6 +214,180 @@ function Get-ScrollThumb {
     }
 }
 
+function Get-TagRowModel {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][int]$TagIndex,
+        [Parameter(Mandatory = $true)][int]$TagRowOffset,
+        [AllowNull()]$TagThumb
+    )
+
+    $tagText = ''
+    $tagColor = 'Gray'
+    $tagMarker = ' '
+    $tagItem = Get-VisibleTagByIndex -State $State -TagIndex $TagIndex
+
+    if ($null -ne $tagItem) {
+        if ($State.Cursor.TagIndex -eq $TagIndex) {
+            $tagMarker = '>'
+        } elseif ($null -ne $TagThumb) {
+            if ($TagRowOffset -ge $TagThumb.Start -and $TagRowOffset -le $TagThumb.End) {
+                $tagMarker = $SCROLLBAR_THUMB_GLYPH
+            } else {
+                $tagMarker = $SCROLLBAR_TRACK_GLYPH
+            }
+        }
+
+        $isSelected = [bool](Get-PropertyValueOrDefault -Object $tagItem -Name 'IsSelected' -Default $false)
+        $isSelectable = [bool](Get-PropertyValueOrDefault -Object $tagItem -Name 'IsSelectable' -Default $true)
+        $tagName = [string](Get-PropertyValueOrDefault -Object $tagItem -Name 'Name' -Default '')
+        $tagMatchCount = [string](Get-PropertyValueOrDefault -Object $tagItem -Name 'MatchCount' -Default '')
+        $mark = if ($isSelected) { '[x]' } else { '[ ]' }
+        $tagText = "$tagMarker $mark $tagName ($tagMatchCount)"
+
+        if (-not $isSelectable -and -not $isSelected) {
+            $tagColor = 'DarkGray'
+        } elseif ($isSelected) {
+            $tagColor = 'Green'
+        }
+    } elseif ($null -ne $TagThumb) {
+        if ($TagRowOffset -ge $TagThumb.Start -and $TagRowOffset -le $TagThumb.End) {
+            $tagMarker = $SCROLLBAR_THUMB_GLYPH
+        } else {
+            $tagMarker = $SCROLLBAR_TRACK_GLYPH
+        }
+        $tagText = $tagMarker
+        $tagColor = 'DarkGray'
+    }
+
+    return [pscustomobject]@{
+        Text = $tagText
+        Color = $tagColor
+        Marker = $tagMarker
+    }
+}
+
+function Build-TagSegments {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$TagText,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$TagMarker,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$TagColor
+    )
+
+    if ($TagText.Length -eq 0) {
+        Write-Output -NoEnumerate @()
+        return
+    }
+
+    $markerLength = [Math]::Max(0, [Math]::Min($TagText.Length, $TagMarker.Length))
+    if ($markerLength -le 0) {
+        Write-Output -NoEnumerate @(
+            @{ Text = $TagText; Color = $TagColor }
+        )
+        return
+    }
+
+    $restText = $TagText.Substring($markerLength)
+    $segments = @(
+        @{ Text = $TagText.Substring(0, $markerLength); Color = (Get-MarkerColor -Marker $TagMarker) }
+    )
+
+    if ($restText.Length -gt 0) {
+        $segments += @{ Text = $restText; Color = $TagColor }
+    }
+
+    Write-Output -NoEnumerate $segments
+}
+
+function Build-IdeaSegments {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Marker,
+        [AllowNull()]$Idea,
+        [Parameter(Mandatory = $true)][bool]$IsSelected
+    )
+
+    if ($null -eq $Idea) {
+        if ([string]::IsNullOrEmpty($Marker) -or $Marker -eq ' ') {
+            Write-Output -NoEnumerate @()
+            return
+        }
+        Write-Output -NoEnumerate @(
+            @{ Text = $Marker; Color = (Get-MarkerColor -Marker $Marker) }
+        )
+        return
+    }
+
+    $ideaId = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Id' -Default '')
+    $ideaTitle = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Title' -Default '')
+
+    $markerColor = if ($IsSelected) { 'Cyan' } else { Get-MarkerColor -Marker $Marker }
+    $titleColor = if ($IsSelected) { 'White' } else { 'Gray' }
+
+    $segments = @(
+        @{ Text = $Marker; Color = $markerColor },
+        @{ Text = " $ideaId"; Color = 'DarkGray' }
+    )
+
+    if ($ideaTitle.Length -gt 0) {
+        $segments += @{ Text = " $ideaTitle"; Color = $titleColor }
+    }
+
+    Write-Output -NoEnumerate $segments
+}
+
+function Build-DetailSegments {
+    param([AllowNull()]$Idea)
+
+    if ($null -eq $Idea) {
+        Write-Output -NoEnumerate @(
+            @(
+                @{ Text = 'No matching ideas'; Color = 'DarkGray' }
+            )
+        )
+        return
+    }
+
+    $ideaId = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Id' -Default '')
+    $priority = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Priority' -Default '')
+    $effort = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Effort' -Default '')
+    $risk = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Risk' -Default '')
+    $summary = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Summary' -Default '')
+    $rationale = [string](Get-PropertyValueOrDefault -Object $Idea -Name 'Rationale' -Default '')
+    $tagsRaw = Get-PropertyValueOrDefault -Object $Idea -Name 'Tags' -Default @()
+    $tags = @($tagsRaw | ForEach-Object { [string]$_ })
+    $tagsText = $tags -join ', '
+
+    Write-Output -NoEnumerate @(
+        @(
+            @{ Text = 'ID: '; Color = 'DarkYellow' },
+            @{ Text = $ideaId; Color = 'DarkGray' }
+        ),
+        @(
+            @{ Text = 'Priority: '; Color = 'DarkYellow' },
+            @{ Text = $priority; Color = (Get-PriorityColor -Priority $priority) },
+            @{ Text = '  Effort: '; Color = 'DarkYellow' },
+            @{ Text = $effort; Color = 'Gray' },
+            @{ Text = '  Risk: '; Color = 'DarkYellow' },
+            @{ Text = $risk; Color = (Get-RiskColor -Risk $risk) }
+        ),
+        @(
+            @{ Text = 'Tags: '; Color = 'DarkYellow' },
+            @{ Text = $tagsText; Color = 'Gray' }
+        ),
+        @(
+            @{ Text = ''; Color = 'Gray' }
+        ),
+        @(
+            @{ Text = 'Summary: '; Color = 'DarkYellow' },
+            @{ Text = $summary; Color = 'Gray' }
+        ),
+        @(
+            @{ Text = 'Rationale: '; Color = 'DarkYellow' },
+            @{ Text = $rationale; Color = 'Gray' }
+        )
+    )
+}
+
 function Render-BrowserState {
     param(
         [Parameter(Mandatory = $true)]$State
@@ -105,63 +413,29 @@ function Render-BrowserState {
     $tagThumb = Get-ScrollThumb -TotalItems $State.Derived.VisibleTags.Count -ViewRows $tagViewRows -ScrollTop $State.Cursor.TagScrollTop
     $ideaThumb = Get-ScrollThumb -TotalItems $State.Derived.VisibleIdeaIds.Count -ViewRows $ideaViewRows -ScrollTop $State.Cursor.IdeaScrollTop
 
-    $detailLines = @()
+    $detailSegments = @()
     if ($State.Derived.VisibleIdeaIds.Count -eq 0) {
-        $detailLines = @('No matching ideas')
+        $detailSegments = Build-DetailSegments -Idea $null
     } else {
         $selectedId = $State.Derived.VisibleIdeaIds[[Math]::Min($State.Cursor.IdeaIndex, $State.Derived.VisibleIdeaIds.Count - 1)]
         $selectedIdea = Get-IdeaById -Ideas $State.Data.AllIdeas -Id $selectedId
-        if ($null -ne $selectedIdea) {
-            $detailLines = @(
-                "ID: $($selectedIdea.Id)",
-                "Priority: $($selectedIdea.Priority)  Effort: $($selectedIdea.Effort)  Risk: $($selectedIdea.Risk)",
-                "Tags: $(@($selectedIdea.Tags) -join ', ')",
-                '',
-                "Summary: $($selectedIdea.Summary)",
-                "Rationale: $($selectedIdea.Rationale)"
-            )
-        }
+        $detailSegments = Build-DetailSegments -Idea $selectedIdea
     }
 
-    Write-Host (Write-TruncatedLine -Text '[Tags]' -Width $layout.TagPane.W) -ForegroundColor Cyan -NoNewline
+    $tagHeaderColor = if ($State.Ui.ActivePane -eq 'Tags') { 'Cyan' } else { 'DarkGray' }
+    $ideaHeaderColor = if ($State.Ui.ActivePane -eq 'Ideas') { 'Cyan' } else { 'DarkGray' }
+    Write-Host (Write-TruncatedLine -Text '[Tags]' -Width $layout.TagPane.W) -ForegroundColor $tagHeaderColor -NoNewline
     Write-Host ' ' -NoNewline
-    Write-Host (Write-TruncatedLine -Text '[Ideas]' -Width $layout.ListPane.W) -ForegroundColor Cyan
+    Write-Host (Write-TruncatedLine -Text '[Ideas]' -Width $layout.ListPane.W) -ForegroundColor $ideaHeaderColor
 
     for ($row = 0; $row -lt $topRows; $row++) {
-        $tagText = ''
-        $tagColor = 'Gray'
         $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-        $tagMarker = ' '
-        $tagItem = Get-VisibleTagByIndex -State $State -TagIndex $tagIndex
-        if ($null -ne $tagItem) {
-            if ($State.Cursor.TagIndex -eq $tagIndex) {
-                $tagMarker = '>'
-            } elseif ($null -ne $tagThumb) {
-                if ($tagRowOffset -ge $tagThumb.Start -and $tagRowOffset -le $tagThumb.End) {
-                    $tagMarker = $SCROLLBAR_THUMB_GLYPH
-                } else {
-                    $tagMarker = $SCROLLBAR_TRACK_GLYPH
-                }
-            }
-            $mark = if ($tagItem.IsSelected) { '[x]' } else { '[ ]' }
-            $tagText = "$tagMarker $mark $($tagItem.Name) ($($tagItem.MatchCount))"
-            if (-not $tagItem.IsSelectable -and -not $tagItem.IsSelected) {
-                $tagColor = 'DarkGray'
-            } elseif ($tagItem.IsSelected) {
-                $tagColor = 'Green'
-            }
-        } elseif ($null -ne $tagThumb) {
-            if ($tagRowOffset -ge $tagThumb.Start -and $tagRowOffset -le $tagThumb.End) {
-                $tagText = $SCROLLBAR_THUMB_GLYPH
-            } else {
-                $tagText = $SCROLLBAR_TRACK_GLYPH
-            }
-            $tagColor = 'DarkGray'
-        }
+        $tagRow = Get-TagRowModel -State $State -TagIndex $tagIndex -TagRowOffset $tagRowOffset -TagThumb $tagThumb
+        $tagSegments = Build-TagSegments -TagText $tagRow.Text -TagMarker $tagRow.Marker -TagColor $tagRow.Color
 
-        $ideaText = ''
         $ideaMarker = ' '
         $ideaIndex = $State.Cursor.IdeaScrollTop + $row
+        $idea = $null
         if ($ideaIndex -lt $State.Derived.VisibleIdeaIds.Count) {
             $ideaId = $State.Derived.VisibleIdeaIds[$ideaIndex]
             $idea = Get-IdeaById -Ideas $State.Data.AllIdeas -Id $ideaId
@@ -174,98 +448,47 @@ function Render-BrowserState {
                     $ideaMarker = $SCROLLBAR_TRACK_GLYPH
                 }
             }
-            if ($null -ne $idea) {
-                $ideaText = "$ideaMarker $($idea.Id) $($idea.Title)"
-            }
         } elseif ($null -ne $ideaThumb) {
             if ($row -ge $ideaThumb.Start -and $row -le $ideaThumb.End) {
-                $ideaText = $SCROLLBAR_THUMB_GLYPH
+                $ideaMarker = $SCROLLBAR_THUMB_GLYPH
             } else {
-                $ideaText = $SCROLLBAR_TRACK_GLYPH
+                $ideaMarker = $SCROLLBAR_TRACK_GLYPH
             }
         }
 
-        Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -ForegroundColor $tagColor -NoNewline
+        $isSelectedIdea = ($ideaIndex -lt $State.Derived.VisibleIdeaIds.Count -and $State.Cursor.IdeaIndex -eq $ideaIndex -and $null -ne $idea)
+        $ideaSegments = Build-IdeaSegments -Marker $ideaMarker -Idea $idea -IsSelected $isSelectedIdea
+
+        Write-ColorSegments -Segments $tagSegments -Width $layout.TagPane.W -NoNewline
         Write-Host ' ' -NoNewline
-        Write-Host (Write-TruncatedLine -Text $ideaText -Width $layout.ListPane.W)
+        if ($isSelectedIdea) {
+            Write-ColorSegments -Segments $ideaSegments -Width $layout.ListPane.W -BackgroundColor 'DarkCyan'
+        } else {
+            Write-ColorSegments -Segments $ideaSegments -Width $layout.ListPane.W
+        }
         $tagRowOffset++
     }
 
-    $tagText = ''
-    $tagColor = 'Gray'
     $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-    $tagMarker = ' '
-    $tagItem = Get-VisibleTagByIndex -State $State -TagIndex $tagIndex
-    if ($null -ne $tagItem) {
-        if ($State.Cursor.TagIndex -eq $tagIndex) {
-            $tagMarker = '>'
-        } elseif ($null -ne $tagThumb) {
-            if ($tagRowOffset -ge $tagThumb.Start -and $tagRowOffset -le $tagThumb.End) {
-                $tagMarker = $SCROLLBAR_THUMB_GLYPH
-            } else {
-                $tagMarker = $SCROLLBAR_TRACK_GLYPH
-            }
-        }
-        $mark = if ($tagItem.IsSelected) { '[x]' } else { '[ ]' }
-        $tagText = "$tagMarker $mark $($tagItem.Name) ($($tagItem.MatchCount))"
-        if (-not $tagItem.IsSelectable -and -not $tagItem.IsSelected) {
-            $tagColor = 'DarkGray'
-        } elseif ($tagItem.IsSelected) {
-            $tagColor = 'Green'
-        }
-    } elseif ($null -ne $tagThumb) {
-        if ($tagRowOffset -ge $tagThumb.Start -and $tagRowOffset -le $tagThumb.End) {
-            $tagText = $SCROLLBAR_THUMB_GLYPH
-        } else {
-            $tagText = $SCROLLBAR_TRACK_GLYPH
-        }
-        $tagColor = 'DarkGray'
-    }
-    Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -ForegroundColor $tagColor -NoNewline
+    $tagRow = Get-TagRowModel -State $State -TagIndex $tagIndex -TagRowOffset $tagRowOffset -TagThumb $tagThumb
+    $tagSegments = Build-TagSegments -TagText $tagRow.Text -TagMarker $tagRow.Marker -TagColor $tagRow.Color
+    Write-ColorSegments -Segments $tagSegments -Width $layout.TagPane.W -NoNewline
     Write-Host ' ' -NoNewline
-    Write-Host (Write-TruncatedLine -Text '[Details]' -Width $layout.DetailPane.W) -ForegroundColor Cyan
+    Write-Host (Write-TruncatedLine -Text '[Details]' -Width $layout.DetailPane.W) -ForegroundColor DarkGray
     $tagRowOffset++
 
     for ($row = 0; $row -lt $detailRows; $row++) {
-        $tagText = ''
-        $tagColor = 'Gray'
         $tagIndex = $State.Cursor.TagScrollTop + $tagRowOffset
-        $tagMarker = ' '
-        $tagItem = Get-VisibleTagByIndex -State $State -TagIndex $tagIndex
-        if ($null -ne $tagItem) {
-            if ($State.Cursor.TagIndex -eq $tagIndex) {
-                $tagMarker = '>'
-            } elseif ($null -ne $tagThumb) {
-                if ($tagRowOffset -ge $tagThumb.Start -and $tagRowOffset -le $tagThumb.End) {
-                    $tagMarker = $SCROLLBAR_THUMB_GLYPH
-                } else {
-                    $tagMarker = $SCROLLBAR_TRACK_GLYPH
-                }
-            }
-            $mark = if ($tagItem.IsSelected) { '[x]' } else { '[ ]' }
-            $tagText = "$tagMarker $mark $($tagItem.Name) ($($tagItem.MatchCount))"
-            if (-not $tagItem.IsSelectable -and -not $tagItem.IsSelected) {
-                $tagColor = 'DarkGray'
-            } elseif ($tagItem.IsSelected) {
-                $tagColor = 'Green'
-            }
-        } elseif ($null -ne $tagThumb) {
-            if ($tagRowOffset -ge $tagThumb.Start -and $tagRowOffset -le $tagThumb.End) {
-                $tagText = $SCROLLBAR_THUMB_GLYPH
-            } else {
-                $tagText = $SCROLLBAR_TRACK_GLYPH
-            }
-            $tagColor = 'DarkGray'
+        $tagRow = Get-TagRowModel -State $State -TagIndex $tagIndex -TagRowOffset $tagRowOffset -TagThumb $tagThumb
+        $tagSegments = Build-TagSegments -TagText $tagRow.Text -TagMarker $tagRow.Marker -TagColor $tagRow.Color
+        $detailRowSegments = @()
+        if ($row -lt $detailSegments.Count) {
+            $detailRowSegments = @($detailSegments[$row])
         }
 
-        $detailText = ''
-        if ($row -lt $detailLines.Count) {
-            $detailText = [string]$detailLines[$row]
-        }
-
-        Write-Host (Write-TruncatedLine -Text $tagText -Width $layout.TagPane.W) -ForegroundColor $tagColor -NoNewline
+        Write-ColorSegments -Segments $tagSegments -Width $layout.TagPane.W -NoNewline
         Write-Host ' ' -NoNewline
-        Write-Host (Write-TruncatedLine -Text $detailText -Width $layout.DetailPane.W)
+        Write-ColorSegments -Segments $detailRowSegments -Width $layout.DetailPane.W
         $tagRowOffset++
     }
 
