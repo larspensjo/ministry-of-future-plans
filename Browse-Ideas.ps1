@@ -8,9 +8,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'common\IdeaDocCore.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'browser\Reducer.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'browser\Input.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'browser\Render.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'browser\Reducer.psm1')
+Import-Module (Join-Path $PSScriptRoot 'browser\Input.psm1')
+Import-Module (Join-Path $PSScriptRoot 'browser\Render.psm1') -Force -DisableNameChecking
 
 $resolvedPath = Resolve-IdeaDocPath -Path $IdeasPath
 $lines = Read-TextLines -Path $resolvedPath
