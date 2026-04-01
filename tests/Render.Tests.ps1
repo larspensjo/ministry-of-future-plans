@@ -291,6 +291,12 @@ Describe 'Frame helpers' {
                 $b = @(@{ Text = 'One'; Color = 'Gray'; BackgroundColor = 'DarkCyan' })
                 (Get-FrameRowSignature -Segments $a) | Should -Not -Be (Get-FrameRowSignature -Segments $b)
             }
+
+            It 'returns a stable non-empty signature for rows with empty background' {
+                $signature = Get-FrameRowSignature -Segments @(@{ Text = 'X'; Color = 'Gray'; BackgroundColor = '' })
+                [string]::IsNullOrWhiteSpace($signature) | Should -BeFalse
+                $signature | Should -Be (Get-FrameRowSignature -Segments @(@{ Text = 'X'; Color = 'Gray'; BackgroundColor = '' }))
+            }
         }
 
         Context 'Get-FrameDiff' {
@@ -455,10 +461,12 @@ Describe 'Frame helpers' {
                 $frame.Rows[$frame.Rows.Count - 1].Y | Should -Be ($state.Ui.Layout.Height - 1)
             }
 
-            It 'renders no matching ideas message when there are zero visible ideas' {
+            It 'renders a visible empty-state detail row when there are zero visible ideas' {
                 $state = New-RenderStateFixture -VisibleIdeaIds @() -IdeaIndex 0
                 $frame = Build-FrameFromState -State $state
-                (($frame.Rows | ForEach-Object { ($_.Segments | ForEach-Object { $_.Text }) -join '' }) -join "`n") | Should -Match 'No matching ideas'
+                $firstDetailContentRow = $frame.Rows[$state.Ui.Layout.ListPane.H + 2]
+                $detailText = (($firstDetailContentRow.Segments | ForEach-Object { $_.Text }) -join '').Trim(' ', [char]0x2502)
+                [string]::IsNullOrWhiteSpace($detailText) | Should -BeFalse
             }
 
             It 'applies selected row background in ideas pane' {
