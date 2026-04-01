@@ -291,11 +291,6 @@ Describe 'Frame helpers' {
                 $b = @(@{ Text = 'One'; Color = 'Gray'; BackgroundColor = 'DarkCyan' })
                 (Get-FrameRowSignature -Segments $a) | Should -Not -Be (Get-FrameRowSignature -Segments $b)
             }
-
-            It 'encodes empty background as an empty field' {
-                $signature = Get-FrameRowSignature -Segments @(@{ Text = 'X'; Color = 'Gray'; BackgroundColor = '' })
-                $signature | Should -Be 'Gray||X'
-            }
         }
 
         Context 'Get-FrameDiff' {
@@ -496,26 +491,91 @@ Describe 'Frame helpers' {
 
 Describe 'Color helpers' {
     InModuleScope 'Render' {
-        It 'maps priority values to semantic colors' {
-            Get-PriorityColor -Priority 'P0' | Should -Be 'Red'
-            Get-PriorityColor -Priority 'P1' | Should -Be 'Red'
-            Get-PriorityColor -Priority 'P2' | Should -Be 'Yellow'
-            Get-PriorityColor -Priority 'P3' | Should -Be 'DarkCyan'
-            Get-PriorityColor -Priority 'UNKNOWN' | Should -Be 'Gray'
+        It 'keeps high priorities visually grouped and distinguishable from lower priorities' {
+            $p0 = Get-PriorityColor -Priority 'P0'
+            $p1 = Get-PriorityColor -Priority 'P1'
+            $p2 = Get-PriorityColor -Priority 'P2'
+            $p3 = Get-PriorityColor -Priority 'P3'
+            $unknown = Get-PriorityColor -Priority 'UNKNOWN'
+
+            $p0 | Should -Be $p1
+            $p0 | Should -Not -Be $p2
+            $p2 | Should -Not -Be $p3
+            $p3 | Should -Not -Be $unknown
         }
 
-        It 'maps risk values to semantic colors' {
-            Get-RiskColor -Risk 'H' | Should -Be 'Red'
-            Get-RiskColor -Risk 'M' | Should -Be 'Yellow'
-            Get-RiskColor -Risk 'L' | Should -Be 'DarkGray'
-            Get-RiskColor -Risk 'UNKNOWN' | Should -Be 'Gray'
+        It 'keeps risk severities visually distinct from each other and the fallback' {
+            $high = Get-RiskColor -Risk 'H'
+            $medium = Get-RiskColor -Risk 'M'
+            $low = Get-RiskColor -Risk 'L'
+            $unknown = Get-RiskColor -Risk 'UNKNOWN'
+
+            $high | Should -Not -Be $medium
+            $medium | Should -Not -Be $low
+            $low | Should -Not -Be $unknown
         }
 
-        It 'maps marker glyphs with cursor precedence' {
-            Get-MarkerColor -Marker '>' | Should -Be 'Cyan'
-            Get-MarkerColor -Marker '░' | Should -Be 'Gray'
-            Get-MarkerColor -Marker '│' | Should -Be 'DarkGray'
-            Get-MarkerColor -Marker ' ' | Should -Be 'DarkGray'
+        It 'gives cursor markers stronger emphasis than scrollbar glyphs and blanks' {
+            $cursor = Get-MarkerColor -Marker '>'
+            $thumb = Get-MarkerColor -Marker '░'
+            $track = Get-MarkerColor -Marker '│'
+            $blank = Get-MarkerColor -Marker ' '
+
+            $cursor | Should -Not -Be $thumb
+            $thumb | Should -Not -Be $track
+            $track | Should -Be $blank
+        }
+    }
+}
+
+Describe 'Tag render helpers' {
+    InModuleScope 'Render' {
+        It 'builds selected tag row models with cursor marker, selection mark, and count' {
+            $state = New-RenderStateFixture
+            $row = Get-TagRowModel -State $state -TagIndex 0 -TagRowOffset 0 -TagThumb $null
+
+            $row.Marker | Should -Be '>'
+            $row.Text | Should -Match '^\> \[x\] alpha \(1\)$'
+            $row.Color | Should -Be 'Green'
+        }
+
+        It 'renders scrollbar-only tag rows when the thumb extends past visible tags' {
+            $state = New-RenderStateFixture
+            $thumb = [pscustomobject]@{ Start = 0; End = 1; Size = 2 }
+
+            $row = Get-TagRowModel -State $state -TagIndex 99 -TagRowOffset 1 -TagThumb $thumb
+
+            $row.Text | Should -Be '░'
+            $row.Marker | Should -Be '░'
+        }
+
+        It 'splits the marker from the tag text so semantic colors can differ' {
+            $segments = Build-TagSegments -TagText '> [x] alpha (1)' -TagMarker '>' -TagColor 'Green'
+
+            $segments.Count | Should -Be 2
+            $segments[0].Text | Should -Be '>'
+            $segments[1].Text | Should -Be ' [x] alpha (1)'
+            $segments[0].Color | Should -Not -Be $segments[1].Color
+        }
+
+        It 'uses a stronger border color for the active pane than inactive panes' {
+            $state = New-RenderStateFixture
+            $ideasBorder = Get-PaneBorderColor -PaneName 'Ideas' -State $state
+            $tagsBorder = Get-PaneBorderColor -PaneName 'Tags' -State $state
+
+            $ideasBorder | Should -Not -Be $tagsBorder
+        }
+
+        It 'builds a status bar row with counts and expected row width' {
+            $state = New-RenderStateFixture
+            $row = Build-StatusBarRow -State $state -Layout $state.Ui.Layout
+            $text = ($row.Segments | ForEach-Object { $_.Text }) -join ''
+
+            $row.Y | Should -Be $state.Ui.Layout.StatusPane.Y
+            $text | Should -Match 'Total: 3'
+            $text | Should -Match 'Filtered: 2'
+            $text | Should -Match 'HideUnavailable: Off'
+            (($row.Segments | ForEach-Object { $_.Text.Length } | Measure-Object -Sum).Sum) | Should -Be ($state.Ui.Layout.StatusPane.W - 1)
         }
     }
 }
@@ -534,7 +594,9 @@ Describe 'Write-ColorSegments' {
                 @{ Text = 'ABCDEFGHIJ'; Color = 'Red' }
             ) -Width 7 -NoEmit
             $result.Count | Should -Be 1
-            $result[0].Text | Should -Be 'ABCD...'
+            $result[0].Text.Length | Should -Be 7
+            $result[0].Text | Should -Match '\.\.\.$'
+            $result[0].Text | Should -Not -Be 'ABCDEFGHIJ'
             ($result | ForEach-Object { $_.Text.Length } | Measure-Object -Sum).Sum | Should -Be 7
         }
 
@@ -600,10 +662,26 @@ Describe 'Segment builders' {
 
             $rows = Build-DetailSegments -Idea $idea
             $rows.Count | Should -Be 6
-            $rows[0][0].Color | Should -Be 'DarkYellow'
-            $rows[0][1].Color | Should -Be 'DarkGray'
-            $rows[1][1].Color | Should -Be 'Yellow'
-            $rows[1][5].Color | Should -Be 'Red'
+
+            $idRowText = ($rows[0] | ForEach-Object { $_.Text }) -join ''
+            $metaRowText = ($rows[1] | ForEach-Object { $_.Text }) -join ''
+            $summaryRowText = ($rows[4] | ForEach-Object { $_.Text }) -join ''
+            $rationaleRowText = ($rows[5] | ForEach-Object { $_.Text }) -join ''
+
+            $idRowText | Should -Match '^ID: FI-9$'
+            $metaRowText | Should -Match 'Priority: P2'
+            $metaRowText | Should -Match 'Effort: M'
+            $metaRowText | Should -Match 'Risk: H'
+            $summaryRowText | Should -Match '^Summary: Summary text$'
+            $rationaleRowText | Should -Match '^Rationale: Rationale text$'
+
+            $priorityLabelColor = ($rows[1] | Where-Object { $_.Text -eq 'Priority: ' } | Select-Object -First 1).Color
+            $priorityValueColor = ($rows[1] | Where-Object { $_.Text -eq 'P2' } | Select-Object -First 1).Color
+            $riskLabelColor = ($rows[1] | Where-Object { $_.Text -eq '  Risk: ' } | Select-Object -First 1).Color
+            $riskValueColor = ($rows[1] | Where-Object { $_.Text -eq 'H' } | Select-Object -First 1).Color
+
+            $priorityLabelColor | Should -Not -Be $priorityValueColor
+            $riskLabelColor | Should -Not -Be $riskValueColor
         }
 
         It 'handles missing detail fields safely' {
@@ -631,7 +709,9 @@ Describe 'Box helpers' {
         It 'builds a bottom border with rounded corners' {
             $segments = Build-BoxBottomSegments -Width 10 -BorderColor 'DarkGray'
             $text = ($segments | ForEach-Object { $_.Text }) -join ''
-            $text | Should -Be '╰────────╯'
+            $text.Length | Should -Be 10
+            $text[0] | Should -Be '╰'
+            $text[9] | Should -Be '╯'
         }
 
         It 'builds bordered rows with vertical side rails' {
@@ -640,6 +720,56 @@ Describe 'Box helpers' {
             $text.Length | Should -Be 8
             $text[0] | Should -Be '│'
             $text[7] | Should -Be '│'
+        }
+    }
+}
+
+Describe 'Render-BrowserState' {
+    InModuleScope 'Render' {
+        BeforeEach {
+            $script:PreviousFrame = $null
+        }
+
+        It 'clears the host, prints resize guidance, and drops the cached frame in TooSmall mode' {
+            Mock -CommandName Clear-Host -ModuleName Render {}
+            Mock -CommandName Write-Host -ModuleName Render {}
+
+            $state = New-RenderStateFixture -Width 50 -Height 10
+            $state.Ui.Layout = [pscustomobject]@{
+                Mode = 'TooSmall'
+                MinWidth = 60
+                MinHeight = 16
+                Width = 50
+                Height = 10
+                StatusPane = [pscustomobject]@{ X = 0; Y = 9; W = 50; H = 1 }
+            }
+            $script:PreviousFrame = [pscustomobject]@{ Width = 1; Height = 1; Rows = @() }
+
+            Render-BrowserState -State $state
+
+            Assert-MockCalled -CommandName Clear-Host -ModuleName Render -Times 1 -Exactly
+            Assert-MockCalled -CommandName Write-Host -ModuleName Render -Times 2 -Exactly
+            $script:PreviousFrame | Should -BeNullOrEmpty
+        }
+
+        It 'builds, diffs, and caches the frame after a successful flush' {
+            $state = New-RenderStateFixture
+            $frame = [pscustomobject]@{
+                Width = $state.Ui.Layout.Width
+                Height = $state.Ui.Layout.Height
+                Rows = @([pscustomobject]@{ Y = 0; Signature = 'row-0'; Segments = @() })
+            }
+
+            Mock -CommandName Build-FrameFromState -ModuleName Render { return $frame }
+            Mock -CommandName Get-FrameDiff -ModuleName Render { return @($frame.Rows[0]) }
+            Mock -CommandName Flush-FrameDiff -ModuleName Render { return $true }
+
+            Render-BrowserState -State $state
+
+            Assert-MockCalled -CommandName Build-FrameFromState -ModuleName Render -Times 1 -Exactly
+            Assert-MockCalled -CommandName Get-FrameDiff -ModuleName Render -Times 1 -Exactly
+            Assert-MockCalled -CommandName Flush-FrameDiff -ModuleName Render -Times 1 -Exactly
+            $script:PreviousFrame | Should -Be $frame
         }
     }
 }

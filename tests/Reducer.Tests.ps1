@@ -25,6 +25,24 @@ Describe 'Browser reducer' {
         $state.Cursor.IdeaIndex | Should -Be 2
     }
 
+    It 'moves up without going below zero in both panes' {
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveDown' })
+        $state.Cursor.TagIndex | Should -Be 1
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveUp' })
+        $state.Cursor.TagIndex | Should -Be 0
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'SwitchPane' })
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveDown' })
+        $state.Cursor.IdeaIndex | Should -Be 1
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveUp' })
+        $state.Cursor.IdeaIndex | Should -Be 0
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'MoveUp' })
+        $state.Cursor.IdeaIndex | Should -Be 0
+    }
+
     It 'supports PageDown/PageUp in ideas pane' {
         $state = New-BrowserState -Ideas $ideas -InitialWidth 120 -InitialHeight 16
         $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'SwitchPane' })
@@ -146,5 +164,59 @@ Describe 'Browser reducer' {
     It 'marks runtime as stopped on quit' {
         $next = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'Quit' })
         $next.Runtime.IsRunning | Should -BeFalse
+    }
+
+    It 'updates layout on resize, including TooSmall mode' {
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'Resize'; Width = 59; Height = 15 })
+        $state.Ui.Layout.Mode | Should -Be 'TooSmall'
+
+        $state = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'Resize'; Width = 120; Height = 40 })
+        $state.Ui.Layout.Mode | Should -Be 'Normal'
+        $state.Ui.Layout.Width | Should -Be 120
+        $state.Ui.Layout.Height | Should -Be 40
+    }
+
+    It 'recomputes derived state for unknown actions without mutating runtime' {
+        $state.Query.SearchText = 'Three'
+        $state.Query.SearchMode = 'Text'
+        $state.Derived.VisibleIdeaIds = @('stale')
+
+        $next = Invoke-BrowserReducer -State $state -Action ([pscustomobject]@{ Type = 'UnknownAction' })
+
+        $next.Derived.VisibleIdeaIds | Should -Be @('FI-3')
+        $next.Runtime.IsRunning | Should -BeTrue
+    }
+
+    It 'ignores ToggleTag without a tag when no visible tags exist' {
+        $emptyState = New-BrowserState -Ideas @(
+            [pscustomobject]@{
+                Id = 'FI-empty'
+                Title = 'Empty tags'
+                Tags = @()
+                Priority = 'P2'
+                Risk = 'M'
+                Captured = [datetime]'2026-02-10'
+                Summary = 'S'
+                Rationale = 'R'
+                Effort = 'M'
+            }
+        ) -InitialWidth 120 -InitialHeight 40
+
+        $next = Invoke-BrowserReducer -State $emptyState -Action ([pscustomobject]@{ Type = 'ToggleTag' })
+
+        $next.Derived.VisibleTags.Count | Should -Be 0
+        $next.Query.SelectedTags.Count | Should -Be 0
+        $next.Cursor.TagIndex | Should -Be 0
+    }
+
+    It 'uses a single-row viewport behavior when layout is TooSmall' {
+        $smallState = New-BrowserState -Ideas $ideas -InitialWidth 59 -InitialHeight 15
+        $smallState.Ui.Layout.Mode | Should -Be 'TooSmall'
+
+        $smallState = Invoke-BrowserReducer -State $smallState -Action ([pscustomobject]@{ Type = 'SwitchPane' })
+        $smallState = Invoke-BrowserReducer -State $smallState -Action ([pscustomobject]@{ Type = 'PageDown' })
+
+        $smallState.Cursor.IdeaIndex | Should -Be 1
+        $smallState.Cursor.IdeaScrollTop | Should -Be 1
     }
 }

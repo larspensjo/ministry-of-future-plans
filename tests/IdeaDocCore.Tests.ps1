@@ -71,6 +71,103 @@ Describe 'ConvertFrom-IdeaDoc typed entries' {
         $entry.Related | Should -Be @('FI-UX-PreviewRich-0003')
         $entry.LineNumber | Should -BeGreaterThan 0
     }
+
+    It 'parses multiple groups and entries in one document' {
+        $lines = @(
+            '# Future Ideas Backlog',
+            '',
+            '## UX',
+            '',
+            '### PreviewRich',
+            '',
+            '#### [FI-UX-PreviewRich-0001] Rich preview mode',
+            'Status: Candidate',
+            'Priority: P2',
+            'Effort: M',
+            'Risk: L',
+            'Tags: [ux, preview]',
+            'Summary: Summary one',
+            'Rationale: Rationale one',
+            '',
+            '## Simulation',
+            '',
+            '### Logistics',
+            '',
+            '#### [FI-Sim-Logistics-0002] Reroute queues',
+            'Status: Candidate',
+            'Priority: P1',
+            'Effort: S',
+            'Risk: M',
+            'Tags: [sim, logistics]',
+            'Summary: Summary two',
+            'Rationale: Rationale two'
+        )
+
+        $doc = ConvertFrom-IdeaDoc -Lines $lines
+        $doc.Groups.Count | Should -Be 4
+        $doc.Entries.Count | Should -Be 2
+        $doc.Entries[0].TopLevel | Should -Be 'UX'
+        $doc.Entries[0].SubLevel | Should -Be 'PreviewRich'
+        $doc.Entries[1].TopLevel | Should -Be 'Simulation'
+        $doc.Entries[1].SubLevel | Should -Be 'Logistics'
+    }
+
+    It 'uses empty defaults when optional sections are absent' {
+        $lines = @(
+            '# Future Ideas Backlog',
+            '',
+            '## UX',
+            '',
+            '### PreviewRich',
+            '',
+            '#### [FI-UX-PreviewRich-0005] Minimal entry',
+            'Status: Candidate',
+            'Priority: P3',
+            'Effort: S',
+            'Risk: M',
+            'Tags: []',
+            'Summary: Summary only',
+            'Rationale: Rationale only'
+        )
+
+        $doc = ConvertFrom-IdeaDoc -Lines $lines
+        $entry = $doc.Entries[0]
+
+        $entry.SuccessCriteria | Should -Be @()
+        $entry.Dependencies | Should -Be @()
+        $entry.Related | Should -Be @()
+        $entry.OriginSourceDoc | Should -BeNullOrEmpty
+        $entry.OriginSection | Should -BeNullOrEmpty
+        $entry.CapturedRaw | Should -BeNullOrEmpty
+        $entry.Captured | Should -BeNullOrEmpty
+    }
+
+    It 'preserves malformed captured values without forcing a datetime' {
+        $lines = @(
+            '# Future Ideas Backlog',
+            '',
+            '## UX',
+            '',
+            '### PreviewRich',
+            '',
+            '#### [FI-UX-PreviewRich-0006] Invalid capture',
+            'Status: Candidate',
+            'Priority: P2',
+            'Effort: M',
+            'Risk: L',
+            'Origin:',
+            '- Captured: not-a-date',
+            'Tags: [ux]',
+            'Summary: Summary text',
+            'Rationale: Rationale text'
+        )
+
+        $doc = ConvertFrom-IdeaDoc -Lines $lines
+        $entry = $doc.Entries[0]
+
+        $entry.CapturedRaw | Should -Be 'not-a-date'
+        $entry.Captured | Should -BeNullOrEmpty
+    }
 }
 
 Describe 'Get-SectionPresence API shape' {
@@ -90,5 +187,18 @@ Describe 'Get-SectionPresence API shape' {
         $section.Start | Should -Be 1
         $section.End | Should -Be 3
         $section.Items.Count | Should -Be 2
+    }
+
+    It 'returns not found shape when the section is absent' {
+        $entryLines = @(
+            'Header: value',
+            'Tags: [a]'
+        )
+
+        $section = Get-SectionPresence -EntryLines $entryLines -Header 'Origin'
+        $section.Found | Should -BeFalse
+        $section.StartIndex | Should -Be -1
+        $section.EndIndex | Should -Be -1
+        $section.Items | Should -Be @()
     }
 }
